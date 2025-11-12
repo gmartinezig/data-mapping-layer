@@ -1162,6 +1162,21 @@
             color: #e83e8c;
         }
 
+        /* Sequence item iteration styling */
+        .sequence-item.iteration-enabled {
+            border-left: 3px solid #fd7e14;
+            background: linear-gradient(to right, #fff5f0, #ffffff);
+        }
+
+        .sequence-item.iteration-enabled .sequence-item-header {
+            background: linear-gradient(to right, #fd7e14, #ff922b);
+            color: white;
+        }
+
+        .sequence-item.iteration-enabled .sequence-item-header span {
+            font-weight: 600;
+        }
+
         @media (max-width: 768px) {
             .container {
                 padding: 10px;

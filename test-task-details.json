@@ -1,0 +1,81 @@
+{
+  "version": "1.0",
+  "name": "Project Tasks to Individual Task Details",
+  "description": "Gets tasks from a project, then iterates to get details for each individual task",
+  "sequence": [
+    {
+      "method": "GET",
+      "path": "/projects/{project_gid}/tasks",
+      "summary": "Get tasks from a project",
+      "description": "Returns tasks from a specific project",
+      "tags": ["Tasks"],
+      "parameters": {
+        "path": {
+          "project_gid": "YOUR_PROJECT_GID_HERE"
+        },
+        "query": {
+          "opt_fields": "gid,name,completed,assignee.name",
+          "limit": "10"
+        },
+        "body": null
+      },
+      "variableMappings": {}
+    },
+    {
+      "method": "GET", 
+      "path": "/tasks/{task_gid}",
+      "summary": "Get details for each task (with iteration)",
+      "description": "This step iterates through each task from step 1 and gets detailed information",
+      "tags": ["Tasks"],
+      "parameters": {
+        "path": {
+          "task_gid": "{{item.gid}}"
+        },
+        "query": {
+          "opt_fields": "gid,name,completed,assignee,due_date,notes,projects.name,created_at,modified_at"
+        },
+        "body": null
+      },
+      "variableMappings": {},
+      "iteration": {
+        "enabled": true,
+        "sourceField": "step0.data",
+        "iterationVariable": "item",
+        "unifyResults": true
+      }
+    }
+  ],
+  "dataTransformations": {
+    "fieldMappings": [
+      {
+        "sourceField": "gid",
+        "targetField": "task_id",
+        "isUnified": false
+      },
+      {
+        "sourceField": "name",
+        "targetField": "task_name", 
+        "isUnified": false
+      },
+      {
+        "sourceField": "completed",
+        "targetField": "is_completed",
+        "isUnified": false
+      },
+      {
+        "sourceField": "assignee.name",
+        "targetField": "assignee_name",
+        "isUnified": false
+      }
+    ],
+    "unifiedColumns": [
+      {
+        "name": "task_summary",
+        "formatTemplate": "{name} - {completed ? 'Completed' : 'Pending'} - {assignee?.name || 'Unassigned'}",
+        "sourceFields": ["name", "completed", "assignee.name"]
+      }
+    ]
+  },
+  "timestamp": "2025-11-12T00:00:00.000Z",
+  "baseUrl": "https://app.asana.com/api/1.0"
+}

@@ -2022,6 +2022,84 @@ ${responseHeaders}</div>
         }
     }
 
+    removeFromSequence(itemId) {
+        const itemIndex = this.apiSequence.findIndex(item => item.id === itemId);
+        if (itemIndex === -1) {
+            console.warn(`Cannot remove sequence item: ${itemId} not found`);
+            return;
+        }
+
+        const item = this.apiSequence[itemIndex];
+        
+        // Confirm deletion if the step has been executed or has configuration
+        const hasExecution = item.executed;
+        const hasConfiguration = Object.values(item.parameters.path).some(v => v) || 
+                                Object.values(item.parameters.query).some(v => v) || 
+                                item.parameters.body ||
+                                Object.keys(item.variableMappings).length > 0 ||
+                                (item.iteration && item.iteration.enabled);
+
+        if (hasExecution || hasConfiguration) {
+            const stepName = `Step ${itemIndex + 1}: ${item.endpoint.method} ${item.endpoint.path}`;
+            const details = [];
+            
+            if (hasExecution) {
+                details.push(item.error ? 'executed with errors' : 'executed successfully');
+            }
+            if (hasConfiguration) {
+                details.push('has custom configuration');
+            }
+            
+            const confirmMessage = `Delete ${stepName}?\n\nThis step ${details.join(' and ')}.`;
+            
+            if (!confirm(confirmMessage)) {
+                return;
+            }
+        }
+
+        // Remove the item
+        this.apiSequence.splice(itemIndex, 1);
+        
+        // Update any dependent iteration configurations that reference this step
+        this.updateDependentIterations(itemIndex);
+        
+        // Re-render the sequence
+        this.renderSequence();
+        
+        console.log(`Removed sequence item ${itemId} at index ${itemIndex}`);
+        
+        // Show feedback message
+        this.showSequenceMessage(`✅ Removed step from sequence`, 'success');
+    }
+
+    updateDependentIterations(removedIndex) {
+        // Update iteration configurations that might reference steps after the removed one
+        this.apiSequence.forEach((item, index) => {
+            if (item.iteration && item.iteration.sourceField) {
+                // Parse the source field to get the step reference
+                const stepMatch = item.iteration.sourceField.match(/^step(\d+)\./);
+                if (stepMatch) {
+                    const referencedStepIndex = parseInt(stepMatch[1]);
+                    
+                    // If the referenced step is after the removed step, decrement the index
+                    if (referencedStepIndex > removedIndex) {
+                        const newStepIndex = referencedStepIndex - 1;
+                        item.iteration.sourceField = item.iteration.sourceField.replace(
+                            /^step\d+\./, 
+                            `step${newStepIndex}.`
+                        );
+                        console.log(`Updated iteration source reference from step${referencedStepIndex} to step${newStepIndex} for item ${item.id}`);
+                    }
+                    // If the referenced step was the removed step, clear the iteration config
+                    else if (referencedStepIndex === removedIndex) {
+                        item.iteration.sourceField = '';
+                        console.log(`Cleared iteration source reference for item ${item.id} (referenced deleted step)`);
+                    }
+                }
+            }
+        });
+    }
+
     captureCurrentParameters(endpointIndex) {
         const endpoint = this.filteredEndpoints[endpointIndex];
         const parameters = {
@@ -2080,17 +2158,23 @@ ${responseHeaders}</div>
             const availableVariables = this.getAvailableVariables(index);
             
             return `
-                <div class="sequence-item ${item.executed ? (item.error ? 'error' : 'executed') : ''} ${item.isImported ? 'imported' : ''}" id="seq-item-${item.id}">
+                <div class="sequence-item ${item.executed ? (item.error ? 'error' : 'executed') : ''} ${item.isImported ? 'imported' : ''} ${item.iteration && item.iteration.enabled ? 'iteration-enabled' : ''}" id="seq-item-${item.id}">
                     <div class="sequence-item-header">
-                        <span>${index + 1}. ${item.endpoint.method} ${item.endpoint.path}</span>
+                        <span>${index + 1}. ${item.endpoint.method} ${item.endpoint.path} ${item.iteration && item.iteration.enabled ? '🔄' : ''}</span>
                         <div style="display: flex; align-items: center; gap: 8px;">
+                            ${item.iteration && item.iteration.enabled ? '<span style="background: #fd7e14; color: white; font-size: 10px; padding: 2px 6px; border-radius: 3px;">ITERATION</span>' : ''}
                             ${item.isImported ? '<span style="background: #17a2b8; color: white; font-size: 10px; padding: 2px 6px; border-radius: 3px;">IMPORTED</span>' : ''}
-                            <button onclick="explorer.removeFromSequence('${item.id}')" style="background: none; border: none; color: #dc3545; cursor: pointer;">×</button>
+                            <button onclick="explorer.removeFromSequence('${item.id}')" 
+                                    style="background: none; border: none; color: #dc3545; cursor: pointer; font-size: 16px; padding: 4px 8px; border-radius: 3px; transition: all 0.2s;"
+                                    onmouseover="this.style.backgroundColor='#dc3545'; this.style.color='white';"
+                                    onmouseout="this.style.backgroundColor='transparent'; this.style.color='#dc3545';"
+                                    title="Delete this step">🗑️</button>
                         </div>
                     </div>
                     <div class="sequence-item-content">
                         <div style="font-size: 12px; color: #6c757d; margin-bottom: 10px;">
                             ${item.endpoint.summary}
+                            ${item.iteration && item.iteration.enabled ? `<br><strong style="color: #fd7e14;">🔄 Iteration Mode:</strong> Will execute for each item from ${item.iteration.sourceField || 'configured source'}` : ''}
                             ${item.isImported ? '<br><em>⚠️ This endpoint was imported and may not match current API spec</em>' : ''}
                         </div>
                         
@@ -2104,7 +2188,9 @@ ${responseHeaders}</div>
                         
                         <div style="margin-top: 10px;">
                             <button class="sequence-btn sequence-btn-primary" onclick="explorer.executeSequenceItem('${item.id}')" style="font-size: 12px;" ${!this.personalAccessToken ? 'disabled' : ''}>
-                                ${this.personalAccessToken ? 'Execute This Step' : 'Enter PAT to Execute'}
+                                ${this.personalAccessToken ? 
+                                    (item.iteration && item.iteration.enabled ? '🔄 Execute Iteration' : 'Execute This Step') 
+                                    : 'Enter PAT to Execute'}
                             </button>
                             <button class="sequence-btn sequence-btn-secondary" onclick="explorer.toggleParameterEditor('${item.id}')" style="font-size: 12px; margin-left: 8px;">
                                 ⚙️ Edit Parameters
@@ -2123,7 +2209,11 @@ ${responseHeaders}</div>
                                         </div>
                                     </div>` :
                                     `<div class="results-header">
-                                        <span style="color: #28a745;">✅ Success (${item.result?.data ? Array.isArray(item.result.data) ? item.result.data.length + ' items' : '1 item' : 'No data'})</span>
+                                        <span style="color: #28a745;">✅ Success ${item.iteration && item.iteration.enabled ? '🔄' : ''} (${
+                                            item.result?.iteration_summary ? 
+                                                `${item.result.iteration_summary.successful_iterations}/${item.result.iteration_summary.total_iterations} iterations, ${item.result?.data ? Array.isArray(item.result.data) ? item.result.data.length + ' total items' : '1 item' : 'No data'}` :
+                                                (item.result?.data ? Array.isArray(item.result.data) ? item.result.data.length + ' items' : '1 item' : 'No data')
+                                        })</span>
                                         <div class="results-actions">
                                             <button class="copy-btn" onclick="explorer.copySequenceResult('${item.id}', 'json')">
                                                 📋 Copy JSON
@@ -2257,6 +2347,14 @@ ${responseHeaders}</div>
                 
                 if (result.data) {
                     if (Array.isArray(result.data)) {
+                        // Add the array itself for iteration
+                        variables.push({
+                            path: `${prevItem.id}.data`,
+                            description: `Array data from step ${i + 1} (${result.data.length} items)`,
+                            example: `[${result.data.slice(0, 2).map(item => item.gid || item.name || 'item').join(', ')}${result.data.length > 2 ? ', ...' : ''}]`
+                        });
+                        
+                        // Add individual field paths for reference
                         variables.push({
                             path: `${prevItem.id}.data[0].gid`,
                             description: `First item GID from step ${i + 1}`,
@@ -2361,7 +2459,7 @@ ${responseHeaders}</div>
                                         📋 Vars
                                     </button>
                                 </div>
-                                <div class="param-hint">Use {{stepId.data[0].gid}} for variables</div>
+                                <div class="param-hint">Use {{stepId.data[0].gid}} for variables${item.iteration && item.iteration.enabled ? ` or {{${item.iteration.iterationVariable || 'item'}.gid}} for iteration` : ''}</div>
                             </div>
                         `).join('')}
                     </div>
@@ -3375,8 +3473,19 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
 
         // Get available array variables from previous steps
         const arrayVariables = availableVariables.filter(variable => 
-            variable.description.includes('array') || variable.path.includes('.data') || variable.example.includes('[')
+            variable.description.includes('Array data') || 
+            variable.description.includes('array') || 
+            (variable.path.includes('.data') && !variable.path.includes('[0]')) || // Include .data but not .data[0].field
+            variable.example.includes('[')
         );
+
+        console.log(`🔄 Iteration config for step ${item.id}:`, {
+            itemIndex,
+            totalAvailableVariables: availableVariables.length,
+            availableVariables: availableVariables.map(v => ({ path: v.path, description: v.description })),
+            filteredArrayVariables: arrayVariables.length,
+            arrayVariables: arrayVariables.map(v => ({ path: v.path, description: v.description }))
+        });
 
         // Also check for any existing iteration configuration
         const hasIterationConfig = item.iteration && item.iteration.enabled;
@@ -3394,6 +3503,7 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
                                ${item.iteration.enabled ? 'checked' : ''} 
                                onchange="explorer.toggleIteration('${item.id}', this.checked)">
                         🔄 Enable Iteration
+                        ${item.iteration.enabled && !item.iteration.sourceField ? '<span style="color: #d9534f; font-size: 10px; margin-left: 5px;">(Configure source required)</span>' : ''}
                     </label>
                     <span style="color: #6c757d; font-size: 11px;">Execute this step for each item in array data</span>
                 </div>
@@ -3402,13 +3512,13 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
                      style="display: ${item.iteration.enabled ? 'block' : 'none'}; margin-left: 20px;">
                      
                     <div style="margin-bottom: 8px;">
-                        <label style="display: block; font-weight: 600; font-size: 11px; margin-bottom: 4px;">
-                            Iterate over array from:
+                        <label style="display: block; font-weight: 600; font-size: 11px; margin-bottom: 4px; color: ${item.iteration.sourceField ? '#333' : '#d9534f'};">
+                            Iterate over array from: ${item.iteration.sourceField ? '' : '(Required)'}
                         </label>
                         <select id="iteration-source-${item.id}" 
                                 onchange="explorer.updateIteration('${item.id}', 'sourceField', this.value)"
-                                style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ced4da; border-radius: 3px;">
-                            <option value="">Select array data source...</option>
+                                style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid ${item.iteration.sourceField ? '#ced4da' : '#d9534f'}; border-radius: 3px;">
+                            <option value="">⚠️ Select array data source to enable iteration...</option>
                             ${arrayVariables.concat([
                                 // Add any currently configured source that might not be in arrayVariables
                                 ...(item.iteration.sourceField && !arrayVariables.find(v => v.path === item.iteration.sourceField) 
@@ -3467,6 +3577,9 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
             settings.style.display = enabled ? 'block' : 'none';
         }
 
+        // Re-render the sequence to update visual indicators
+        this.renderSequence();
+
         console.log(`Iteration ${enabled ? 'enabled' : 'disabled'} for step ${itemId}`);
     }
 
@@ -3475,6 +3588,11 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
         if (!item) return;
 
         item.iteration[field] = value;
+        
+        // Re-render the sequence to update iteration source display if that changed
+        if (field === 'sourceField') {
+            this.renderSequence();
+        }
         
         // Update the usage hint when iteration variable name changes
         if (field === 'iterationVariable') {
@@ -3589,9 +3707,22 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
             item.error = null;
 
             // Check if this step should iterate
+            console.log(`🔄 Checking iteration conditions for ${item.id}:`);
+            console.log(`🔄 item.iteration:`, item.iteration);
+            console.log(`🔄 item.iteration.enabled:`, item.iteration?.enabled);
+            console.log(`🔄 item.iteration.sourceField:`, item.iteration?.sourceField);
+            
             if (item.iteration && item.iteration.enabled && item.iteration.sourceField) {
+                console.log(`🔄 Executing in ITERATION mode`);
                 await this.executeIterativeSequenceItem(item);
             } else {
+                if (item.iteration?.enabled && !item.iteration?.sourceField) {
+                    console.warn(`⚠️ Iteration is enabled but no source field selected - executing in single mode`);
+                    // Show user-friendly message
+                    this.showSequenceMessage('⚠️ Iteration enabled but no source field selected. Please configure the iteration source in step settings.', 'warning');
+                } else {
+                    console.log(`🔄 Executing in SINGLE mode (iteration not properly configured)`);
+                }
                 await this.executeSingleSequenceItem(item);
             }
 
@@ -3687,6 +3818,22 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
         const iterationResults = [];
         const iterationErrors = [];
         const variableName = item.iteration.iterationVariable || 'item';
+        
+        // Validate that parameters contain proper iteration placeholders
+        const allParams = JSON.stringify(item.parameters);
+        const properPlaceholderPattern = new RegExp(`\\{\\{${variableName}\\.(\\w+)\\}\\}`, 'g');
+        const singleBracePlaceholders = allParams.match(/\{(\w+)\}/g);
+        const doubleBracePlaceholders = allParams.match(properPlaceholderPattern);
+        
+        if (singleBracePlaceholders && !doubleBracePlaceholders) {
+            console.warn(`⚠️ Found single brace placeholders: ${singleBracePlaceholders.join(', ')}`);
+            console.warn(`⚠️ For iteration, use double braces like {{${variableName}.gid}} instead of {task_gid}`);
+        }
+        
+        if (iterationData.length > 0) {
+            console.log(`🔄 First item sample:`, iterationData[0]);
+            console.log(`🔄 Available fields:`, Object.keys(iterationData[0] || {}));
+        }
 
         // Store original parameters as template
         const originalParameters = JSON.parse(JSON.stringify(item.parameters));
@@ -3706,40 +3853,78 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
                 
                 // Apply path parameters with iteration context
                 const pathParams = this.extractPathParameters(item.endpoint.path);
+                console.log(`🔄 Path parameters needed:`, pathParams);
+                console.log(`🔄 Original path parameters:`, originalParameters.path);
+                
                 pathParams.forEach(param => {
                     let value = originalParameters.path[param];
+                    console.log(`🔄 Processing path param ${param}: original value = "${value}"`);
                     
                     // Check if there's a variable mapping
                     if (item.variableMappings[param]) {
                         value = this.resolveVariable(item.variableMappings[param]);
+                        console.log(`🔄 Resolved via variable mapping to: ${value}`);
                     }
                     
                     // Check if value contains iteration variable placeholder
                     if (typeof value === 'string' && value && value.includes('{{') && value.includes('}}')) {
+                        console.log(`🔄 Found iteration placeholder in path param ${param}: ${value}`);
+                        console.log(`🔄 Iteration item structure:`, iterationItem);
+                        console.log(`🔄 Available fields in iteration item:`, Object.keys(iterationItem || {}));
                         value = this.resolveIterationPlaceholder(value, variableName, iterationItem);
+                        console.log(`🔄 Resolved to: ${value}`);
+                        
+                        // Double-check if resolution failed
+                        if (value === `{{${variableName}.gid}}` || value.includes('{{')) {
+                            console.error(`❌ Iteration placeholder resolution failed!`);
+                            console.error(`❌ Original: {{${variableName}.gid}}`);
+                            console.error(`❌ Variable name: ${variableName}`);
+                            console.error(`❌ Looking for field: gid`);
+                            console.error(`❌ In item:`, iterationItem);
+                            
+                            // Try direct field access as fallback
+                            if (iterationItem && iterationItem.gid) {
+                                console.log(`🔄 Using direct field access fallback`);
+                                value = iterationItem.gid;
+                            }
+                        }
                     }
                     
                     if (value) {
+                        console.log(`🔄 Replacing {${param}} in URL with: ${value}`);
                         url = url.replace(`{${param}}`, encodeURIComponent(value));
+                    } else {
+                        console.warn(`⚠️ No value found for required path parameter: ${param}`);
                     }
                 });
+                
+                console.log(`🔄 Final URL: ${url}`);
 
                 // Build query parameters with iteration context
                 const queryParams = new URLSearchParams();
+                console.log(`🔄 Building query parameters for iteration ${i + 1}:`);
+                console.log(`🔄 Original query parameters:`, originalParameters.query);
+                
                 Object.entries(originalParameters.query || {}).forEach(([key, value]) => {
                     if (value) {
                         let resolvedValue = value;
+                        console.log(`🔄 Processing query param: ${key} = "${value}"`);
                         
                         // Resolve iteration placeholders in query parameters
                         if (typeof resolvedValue === 'string' && resolvedValue.includes('{{') && resolvedValue.includes('}}')) {
+                            console.log(`🔄 Found iteration placeholder in ${key}: ${resolvedValue}`);
                             resolvedValue = this.resolveIterationPlaceholder(resolvedValue, variableName, iterationItem);
+                            console.log(`🔄 Resolved to: ${resolvedValue}`);
                         }
                         
                         if (resolvedValue) {
                             queryParams.append(key, resolvedValue);
+                            console.log(`🔄 Added final query param: ${key} = ${resolvedValue}`);
                         }
                     }
                 });
+                
+                console.log(`🔄 Final query string: ${queryParams.toString()}`);
 
                 if (queryParams.toString()) {
                     url += `?${queryParams.toString()}`;
@@ -3770,10 +3955,14 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
                 }
 
                 console.log(`🔄 Executing iteration ${i + 1}: ${item.endpoint.method} ${url}`);
+                console.log(`🔄 Request options:`, fetchOptions);
 
                 // Execute request for this iteration
                 const response = await fetch(url, fetchOptions);
                 const responseData = await response.json();
+
+                console.log(`🔄 Response status:`, response.status);
+                console.log(`🔄 Response data:`, responseData);
 
                 if (response.ok) {
                     iterationResults.push(responseData);
@@ -3781,7 +3970,10 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
                 } else {
                     const errorMsg = `Iteration ${i + 1}: ${response.status}: ${responseData.errors?.[0]?.message || responseData.error || 'API call failed'}`;
                     iterationErrors.push(errorMsg);
-                    console.error(`❌ ${errorMsg}`, responseData);
+                    console.error(`❌ ${errorMsg}`);
+                    console.error(`❌ Full error response:`, responseData);
+                    console.error(`❌ Request URL was:`, url);
+                    console.error(`❌ Request options were:`, fetchOptions);
                 }
 
                 // Add delay between iterations to be respectful
@@ -3854,23 +4046,62 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
     resolveIterationPlaceholder(value, variableName, iterationItem) {
         if (typeof value !== 'string') return value;
 
+        console.log(`🔄 resolveIterationPlaceholder input:`, {
+            value: value,
+            variableName: variableName,
+            iterationItem: iterationItem
+        });
+
         // Replace iteration variable placeholders like {{item.gid}} or {{item.name}}
         const iterationPattern = new RegExp(`\\{\\{${variableName}\\.(\\w+)\\}\\}`, 'g');
+        console.log(`🔄 Using pattern: ${iterationPattern.source}`);
         
         let resolvedValue = value.replace(iterationPattern, (match, fieldName) => {
             const fieldValue = iterationItem[fieldName];
-            console.log(`🔄 Resolving iteration placeholder ${match} → ${fieldValue}`);
+            console.log(`🔄 Resolving iteration placeholder ${match} → field: ${fieldName} → value: ${fieldValue}`);
             if (fieldValue === undefined) {
                 console.warn(`⚠️ Field ${fieldName} not found in iteration item. Available fields:`, Object.keys(iterationItem || {}));
             }
             return fieldValue !== undefined ? fieldValue : match; // Return original if field not found
         });
 
+        // Also handle single brace placeholders like {task_gid} (common mistake)
+        if (resolvedValue.includes('{') && resolvedValue.includes('}') && !resolvedValue.includes('{{')) {
+            console.log(`🔄 Found single brace placeholders, attempting to resolve...`);
+            const singleBracePattern = /\{(\w+)\}/g;
+            resolvedValue = resolvedValue.replace(singleBracePattern, (match, fieldName) => {
+                // Try to match field names to iteration item properties
+                let fieldValue;
+                if (fieldName === 'task_gid' && iterationItem.gid) {
+                    fieldValue = iterationItem.gid;
+                } else if (fieldName === 'project_gid' && iterationItem.gid) {
+                    fieldValue = iterationItem.gid;
+                } else if (iterationItem[fieldName]) {
+                    fieldValue = iterationItem[fieldName];
+                } else {
+                    // Try to find a similar field name
+                    const availableFields = Object.keys(iterationItem || {});
+                    const similarField = availableFields.find(field => 
+                        field.toLowerCase().includes(fieldName.toLowerCase()) || 
+                        fieldName.toLowerCase().includes(field.toLowerCase())
+                    );
+                    if (similarField) {
+                        fieldValue = iterationItem[similarField];
+                        console.log(`🔄 Found similar field ${similarField} for ${fieldName}`);
+                    }
+                }
+                
+                console.log(`🔄 Resolving single brace placeholder ${match} → ${fieldValue}`);
+                return fieldValue !== undefined ? fieldValue : match;
+            });
+        }
+
         // Also handle regular variable placeholders
         if (resolvedValue.includes('{{') && resolvedValue.includes('}}')) {
             resolvedValue = this.resolveVariablePlaceholder(resolvedValue);
         }
 
+        console.log(`🔄 Final resolved value: ${resolvedValue}`);
         return resolvedValue;
     }
 

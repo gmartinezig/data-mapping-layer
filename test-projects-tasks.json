@@ -1,0 +1,75 @@
+{
+  "version": "1.0",
+  "name": "Projects to Tasks Iteration Example",
+  "description": "Gets projects, then iterates to get all tasks from each project",
+  "sequence": [
+    {
+      "method": "GET",
+      "path": "/projects",
+      "summary": "Get projects",
+      "description": "Returns projects from a workspace",
+      "tags": ["Projects"],
+      "parameters": {
+        "path": {},
+        "query": {
+          "workspace": "YOUR_WORKSPACE_GID_HERE",
+          "limit": "5",
+          "opt_fields": "gid,name,completed"
+        },
+        "body": null
+      },
+      "variableMappings": {}
+    },
+    {
+      "method": "GET", 
+      "path": "/tasks",
+      "summary": "Get tasks from each project (with iteration)",
+      "description": "This step iterates through each project from step 1 and gets its tasks",
+      "tags": ["Tasks"],
+      "parameters": {
+        "path": {},
+        "query": {
+          "project": "{{item.gid}}",
+          "opt_fields": "gid,name,completed,assignee.name,due_date",
+          "limit": "20"
+        },
+        "body": null
+      },
+      "variableMappings": {},
+      "iteration": {
+        "enabled": true,
+        "sourceField": "step0.data",
+        "iterationVariable": "item",
+        "unifyResults": true
+      }
+    }
+  ],
+  "dataTransformations": {
+    "fieldMappings": [
+      {
+        "sourceField": "gid",
+        "targetField": "task_id",
+        "isUnified": false
+      },
+      {
+        "sourceField": "name",
+        "targetField": "task_name", 
+        "isUnified": false
+      },
+      {
+        "sourceField": "completed",
+        "targetField": "is_completed",
+        "isUnified": false
+      }
+    ],
+    "unifiedColumns": [
+      {
+        "name": "task_info",
+        "formatTemplate": "{name} - {completed ? 'Done' : 'Pending'}",
+        "sourceFields": ["name", "completed"]
+      }
+    ]
+  },
+  "timestamp": "2025-11-12T00:00:00.000Z",
+  "baseUrl": "https://app.asana.com/api/1.0"
+}

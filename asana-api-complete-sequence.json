@@ -1,0 +1,174 @@
+{
+  "version": "1.0",
+  "name": "Asana API Sequence - 11/12/2025",
+  "description": "API sequence with 4 endpoints",
+  "sequence": [
+    {
+      "method": "GET",
+      "path": "/workspaces",
+      "summary": "Get multiple workspaces",
+      "description": "Return all workspaces visible to the authorized user.",
+      "tags": [
+        "Workspaces"
+      ],
+      "parameters": {
+        "path": {},
+        "query": {
+          "limit": "",
+          "offset": "",
+          "opt_fields": "",
+          "opt_expand": ""
+        },
+        "body": null
+      },
+      "variableMappings": {},
+      "iteration": {
+        "enabled": false,
+        "sourceField": "",
+        "iterationVariable": "item",
+        "unifyResults": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspace_gid}/projects",
+      "summary": "Get all projects in a workspace",
+      "description": "Successfully retrieved the requested workspace's projects.",
+      "tags": [
+        "Projects"
+      ],
+      "parameters": {
+        "path": {
+          "workspace_gid": ""
+        },
+        "query": {
+          "limit": "",
+          "offset": "",
+          "opt_fields": "",
+          "opt_expand": ""
+        },
+        "body": null
+      },
+      "variableMappings": {
+        "workspace_gid": "step0.data[0].gid"
+      },
+      "iteration": {
+        "enabled": false,
+        "sourceField": "",
+        "iterationVariable": "item",
+        "unifyResults": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/projects/{project_gid}/tasks",
+      "summary": "Get tasks from a project",
+      "description": "Successfully retrieved the requested project's tasks.",
+      "tags": [
+        "Tasks"
+      ],
+      "parameters": {
+        "path": {
+          "project_gid": ""
+        },
+        "query": {
+          "limit": "",
+          "offset": "",
+          "opt_fields": "",
+          "opt_expand": ""
+        },
+        "body": null
+      },
+      "variableMappings": {
+        "project_gid": "step1.data[0].gid"
+      },
+      "iteration": {
+        "enabled": false,
+        "sourceField": "",
+        "iterationVariable": "item",
+        "unifyResults": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/{task_gid}",
+      "summary": "Get a task",
+      "description": "Successfully retrieved the specified task.",
+      "tags": [
+        "Tasks"
+      ],
+      "parameters": {
+        "path": {
+          "task_gid": "{{item.gid}}"
+        },
+        "query": {
+          "limit": "",
+          "offset": "",
+          "opt_fields": "name,completed,start_on,due_on,parent,dependencies,dependents,completed_percentage,subtasks,resource_subtype",
+          "opt_expand": ""
+        },
+        "body": null
+      },
+      "variableMappings": {},
+      "iteration": {
+        "enabled": true,
+        "sourceField": "step2.data",
+        "iterationVariable": "item",
+        "unifyResults": true
+      }
+    }
+  ],
+  "dataTransformations": {
+    "fieldMappings": [
+      {
+        "sourceField": "data_gid",
+        "targetField": "data_gid",
+        "isUnified": false
+      },
+      {
+        "sourceField": "data_completed",
+        "targetField": "data_completed",
+        "isUnified": false
+      },
+      {
+        "sourceField": "data_due_on",
+        "targetField": "endDate",
+        "isUnified": false
+      },
+      {
+        "sourceField": "data_name",
+        "targetField": "data_name",
+        "isUnified": false
+      },
+      {
+        "sourceField": "data_parent",
+        "targetField": "data_parent",
+        "isUnified": false
+      },
+      {
+        "sourceField": "data_start_on",
+        "targetField": "startDate",
+        "isUnified": false
+      },
+      {
+        "sourceField": "data_subtasks",
+        "targetField": "data_subtasks",
+        "isUnified": false
+      },
+      {
+        "sourceField": "data_resource_subtype",
+        "targetField": "data_resource_subtype",
+        "isUnified": false
+      }
+    ],
+    "unifiedColumns": [
+      {
+        "name": "unified_field",
+        "formatTemplate": "Format: {data_gid} - {data_name}",
+        "sourceFields": []
+      }
+    ]
+  },
+  "timestamp": "2025-11-12T21:39:01.651Z",
+  "baseUrl": "https://app.asana.com/api/1.0"
+}
