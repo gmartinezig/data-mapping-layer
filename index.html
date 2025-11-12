@@ -316,6 +316,292 @@
             display: block;
         }
 
+        .sequence-panel {
+            position: fixed;
+            right: -400px;
+            top: 0;
+            width: 400px;
+            height: 100vh;
+            background: white;
+            box-shadow: -2px 0 10px rgba(0,0,0,0.1);
+            transition: right 0.3s ease;
+            z-index: 1000;
+            overflow-y: auto;
+        }
+
+        .sequence-panel.open {
+            right: 0;
+        }
+
+        .sequence-header {
+            padding: 20px;
+            background: #667eea;
+            color: white;
+            position: sticky;
+            top: 0;
+            z-index: 1001;
+        }
+
+        .sequence-content {
+            padding: 20px;
+        }
+
+        .sequence-item {
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            background: white;
+        }
+
+        .sequence-item-header {
+            padding: 12px 15px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            font-weight: 600;
+        }
+
+        .sequence-item-content {
+            padding: 15px;
+        }
+
+        .sequence-controls {
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .sequence-btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .sequence-btn-primary {
+            background: #007bff;
+            color: white;
+        }
+
+        .sequence-btn-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .sequence-btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .sequence-btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .sequence-toggle {
+            position: fixed;
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 15px 10px;
+            border-radius: 8px 0 0 8px;
+            cursor: pointer;
+            z-index: 999;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            font-weight: 600;
+        }
+
+        .add-to-sequence-btn {
+            background: #17a2b8;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+
+        .variable-mapping {
+            margin-top: 10px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
+        }
+
+        .variable-mapping label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 5px;
+            font-size: 12px;
+        }
+
+        .variable-mapping select {
+            width: 100%;
+            padding: 5px;
+            border: 1px solid #ced4da;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        .sequence-results {
+            margin-top: 15px;
+            max-height: 200px;
+            overflow-y: auto;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+        }
+
+        .sequence-item.executed {
+            border-color: #28a745;
+            background: #f8fff9;
+        }
+
+        .sequence-item.error {
+            border-color: #dc3545;
+            background: #fff8f8;
+        }
+
+        .variable-badge {
+            display: inline-block;
+            background: #e9ecef;
+            color: #495057;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+            margin: 2px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .sequence-item.imported {
+            border-left: 4px solid #17a2b8;
+            background: #f8fdff;
+        }
+
+        .parameter-summary {
+            background: #f1f3f4;
+            padding: 8px 10px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            font-size: 11px;
+            line-height: 1.4;
+        }
+
+        .parameter-summary .param-group {
+            margin-bottom: 4px;
+        }
+
+        .parameter-summary .param-label {
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .parameter-summary .param-value {
+            color: #6c757d;
+            font-family: 'Courier New', monospace;
+        }
+
+        .sequence-parameter-editor {
+            display: none;
+            margin-top: 15px;
+            padding: 15px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+        }
+
+        .sequence-parameter-editor.show {
+            display: block;
+        }
+
+        .param-editor-section {
+            margin-bottom: 15px;
+        }
+
+        .param-editor-title {
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 13px;
+            color: #495057;
+        }
+
+        .param-editor-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+
+        .param-editor-input {
+            padding: 6px 10px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .param-editor-textarea {
+            width: 100%;
+            min-height: 80px;
+            padding: 8px 10px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-size: 12px;
+            font-family: 'Courier New', monospace;
+            resize: vertical;
+        }
+
+        .param-hint {
+            font-size: 11px;
+            color: #6c757d;
+            margin-top: 4px;
+        }
+
+        .copy-btn {
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 10px;
+            margin-left: 8px;
+            transition: background 0.2s;
+        }
+
+        .copy-btn:hover {
+            background: #5a6268;
+        }
+
+        .copy-btn.copied {
+            background: #28a745;
+        }
+
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            padding-bottom: 5px;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        .results-actions {
+            display: flex;
+            gap: 5px;
+        }
+
         .endpoint-description {
             color: #6c757d;
             font-size: 14px;
@@ -593,6 +879,48 @@
 
         <div id="endpointsContainer">
             <!-- Endpoints will be loaded here -->
+        </div>
+    </div>
+
+    <!-- Sequence Panel Toggle -->
+    <button class="sequence-toggle" onclick="explorer.toggleSequencePanel()">
+        API Sequence
+    </button>
+
+    <!-- Sequence Panel -->
+    <div id="sequencePanel" class="sequence-panel">
+        <div class="sequence-header">
+            <h3 style="margin: 0;">API Call Sequence</h3>
+            <button onclick="explorer.toggleSequencePanel()" style="background: none; border: none; color: white; float: right; cursor: pointer; font-size: 18px;">&times;</button>
+        </div>
+        <div class="sequence-content">
+            <div class="sequence-controls">
+                <button class="sequence-btn sequence-btn-success" onclick="explorer.executeSequence()">
+                    ▶ Execute All
+                </button>
+                <button class="sequence-btn sequence-btn-danger" onclick="explorer.clearSequence()">
+                    🗑 Clear All
+                </button>
+                <button class="sequence-btn sequence-btn-secondary" onclick="explorer.exportSequence()">
+                    📋 Export
+                </button>
+                <button class="sequence-btn sequence-btn-primary" onclick="explorer.importSequence()">
+                    📁 Import
+                </button>
+                <button class="sequence-btn sequence-btn-secondary" onclick="explorer.loadSampleSequence()" style="font-size: 12px;">
+                    🎯 Sample
+                </button>
+                <button class="sequence-btn sequence-btn-secondary" onclick="explorer.copyAllResults()" style="font-size: 12px;">
+                    📋 Copy All
+                </button>
+                <input type="file" id="sequenceFileInput" accept=".json" style="display: none;" onchange="explorer.handleSequenceFile(event)">
+            </div>
+            <div id="sequenceItems">
+                <div style="text-align: center; color: #6c757d; padding: 2rem;">
+                    <p>No endpoints in sequence yet.</p>
+                    <p><small>Click the "Add to Sequence" button on any endpoint to start building your API call chain.</small></p>
+                </div>
+            </div>
         </div>
     </div>
 

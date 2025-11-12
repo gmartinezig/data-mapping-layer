@@ -9,6 +9,12 @@ class AsanaAPIExplorer {
         this.baseUrl = 'https://app.asana.com/api/1.0';
         this.storageKey = 'asana-api-explorer-pat';
         
+        // Sequence management
+        this.apiSequence = [];
+        this.sequenceResults = new Map(); // Store results from previous calls
+        this.sequencePanelOpen = false;
+        this.currentSequenceItem = null; // Current item being executed
+        
         this.loadPATFromStorage();
         this.init();
     }
@@ -1293,6 +1299,9 @@ class AsanaAPIExplorer {
                                     ${!this.personalAccessToken ? 'disabled' : ''} id="execute-btn-${index}">
                                 ${this.personalAccessToken ? 'Execute API Call' : 'Enter PAT to Execute'}
                             </button>
+                            <button class="add-to-sequence-btn" onclick="explorer.addToSequence(${index})">
+                                + Add to Sequence
+                            </button>
                         </div>
                         <div id="response-${index}" class="response-section"></div>
                     </div>
@@ -1693,48 +1702,80 @@ ${responseHeaders}</div>
         return url;
     }
 
-    buildQueryParameters(index) {
+    buildQueryParameters(endpointIndex) {
         const params = new URLSearchParams();
         
-        // Common parameters
-        const limitInput = document.getElementById(`query-limit-${index}`);
-        if (limitInput && limitInput.value) {
-            params.append('limit', limitInput.value);
-        } else {
-            params.append('limit', '10'); // Default limit
-        }
-
-        const offsetInput = document.getElementById(`query-offset-${index}`);
-        if (offsetInput && offsetInput.value) {
-            params.append('offset', offsetInput.value);
-        }
-
-        const fieldsInput = document.getElementById(`query-opt_fields-${index}`);
-        if (fieldsInput && fieldsInput.value) {
-            params.append('opt_fields', fieldsInput.value);
-        }
-
-        const expandInput = document.getElementById(`query-opt_expand-${index}`);
-        if (expandInput && expandInput.value) {
-            params.append('opt_expand', expandInput.value);
-        }
-
-        // Additional endpoint-specific parameters
-        ['archived', 'team', 'assignee', 'project', 'completed_since'].forEach(paramName => {
-            const input = document.getElementById(`query-${paramName}-${index}`);
-            if (input && input.value) {
-                if (input.type === 'checkbox') {
-                    if (input.checked) {
-                        params.append(paramName, 'true');
+        // For sequence execution, get parameters from sequence item
+        const sequenceItem = this.currentSequenceItem;
+        
+        if (sequenceItem) {
+            // Use parameters from sequence item with variable substitution
+            Object.entries(sequenceItem.parameters.query).forEach(([key, value]) => {
+                if (value && value !== '') {
+                    // Check if value contains variable placeholder
+                    if (typeof value === 'string' && value.includes('{{') && value.includes('}}')) {
+                        const resolvedValue = this.resolveVariablePlaceholder(value);
+                        if (resolvedValue !== null) {
+                            params.append(key, resolvedValue);
+                        }
+                    } else {
+                        params.append(key, value);
                     }
-                } else {
-                    params.append(paramName, input.value);
                 }
+            });
+        } else {
+            // Normal endpoint execution - use form inputs
+            const limitInput = document.getElementById(`query-limit-${endpointIndex}`);
+            if (limitInput && limitInput.value) {
+                params.append('limit', limitInput.value);
+            } else {
+                params.append('limit', '10'); // Default limit
             }
-        });
+
+            const offsetInput = document.getElementById(`query-offset-${endpointIndex}`);
+            if (offsetInput && offsetInput.value) {
+                params.append('offset', offsetInput.value);
+            }
+
+            const fieldsInput = document.getElementById(`query-opt_fields-${endpointIndex}`);
+            if (fieldsInput && fieldsInput.value) {
+                params.append('opt_fields', fieldsInput.value);
+            }
+
+            const expandInput = document.getElementById(`query-opt_expand-${endpointIndex}`);
+            if (expandInput && expandInput.value) {
+                params.append('opt_expand', expandInput.value);
+            }
+
+            // Additional endpoint-specific parameters
+            ['archived', 'team', 'assignee', 'project', 'workspace', 'completed_since'].forEach(paramName => {
+                const input = document.getElementById(`query-${paramName}-${endpointIndex}`);
+                if (input && input.value) {
+                    if (input.type === 'checkbox') {
+                        if (input.checked) {
+                            params.append(paramName, 'true');
+                        }
+                    } else {
+                        params.append(paramName, input.value);
+                    }
+                }
+            });
+        }
 
         params.append('opt_pretty', 'true');
         return params;
+    }
+
+    resolveVariablePlaceholder(value) {
+        // Extract variable path from {{variable.path}} format
+        const match = value.match(/\{\{([^}]+)\}\}/);
+        if (match) {
+            const variablePath = match[1];
+            const resolvedValue = this.resolveVariable(variablePath);
+            console.log(`Resolving variable: ${value} → ${resolvedValue}`);
+            return resolvedValue;
+        }
+        return value;
     }
 
     buildRequestBody(index) {
@@ -1763,6 +1804,1285 @@ ${responseHeaders}</div>
                 ${content}
             </div>
         `;
+    }
+
+    // Sequence Management Methods
+    toggleSequencePanel() {
+        const panel = document.getElementById('sequencePanel');
+        this.sequencePanelOpen = !this.sequencePanelOpen;
+        
+        if (this.sequencePanelOpen) {
+            panel.classList.add('open');
+            document.body.style.marginRight = '400px';
+        } else {
+            panel.classList.remove('open');
+            document.body.style.marginRight = '0';
+        }
+    }
+
+    addToSequence(endpointIndex) {
+        const endpoint = this.filteredEndpoints[endpointIndex];
+        const sequenceItem = {
+            id: `seq_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            endpoint: endpoint,
+            endpointIndex: endpointIndex,
+            parameters: this.captureCurrentParameters(endpointIndex),
+            variableMappings: {},
+            executed: false,
+            result: null,
+            error: null
+        };
+
+        this.apiSequence.push(sequenceItem);
+        this.renderSequence();
+        
+        // Open sequence panel if not already open
+        if (!this.sequencePanelOpen) {
+            this.toggleSequencePanel();
+        }
+    }
+
+    captureCurrentParameters(endpointIndex) {
+        const endpoint = this.filteredEndpoints[endpointIndex];
+        const parameters = {
+            path: {},
+            query: {},
+            body: null
+        };
+
+        // Capture path parameters
+        const pathParams = this.extractPathParameters(endpoint.path);
+        pathParams.forEach(param => {
+            const input = document.getElementById(`path-${param}-${endpointIndex}`);
+            if (input) {
+                parameters.path[param] = input.value;
+            }
+        });
+
+        // Capture query parameters
+        const queryParams = ['limit', 'offset', 'opt_fields', 'opt_expand', 'archived', 'team', 'assignee', 'project', 'completed_since'];
+        queryParams.forEach(param => {
+            const input = document.getElementById(`query-${param}-${endpointIndex}`);
+            if (input) {
+                if (input.type === 'checkbox') {
+                    parameters.query[param] = input.checked;
+                } else {
+                    parameters.query[param] = input.value;
+                }
+            }
+        });
+
+        // Capture body
+        if (['POST', 'PUT', 'PATCH'].includes(endpoint.method)) {
+            const bodyInput = document.getElementById(`body-${endpointIndex}`);
+            if (bodyInput) {
+                parameters.body = bodyInput.value;
+            }
+        }
+
+        return parameters;
+    }
+
+    renderSequence() {
+        const container = document.getElementById('sequenceItems');
+        
+        if (this.apiSequence.length === 0) {
+            container.innerHTML = `
+                <div style="text-align: center; color: #6c757d; padding: 2rem;">
+                    <p>No endpoints in sequence yet.</p>
+                    <p><small>Click the "Add to Sequence" button on any endpoint to start building your API call chain.</small></p>
+                </div>
+            `;
+            return;
+        }
+
+        const sequenceHTML = this.apiSequence.map((item, index) => {
+            const availableVariables = this.getAvailableVariables(index);
+            
+            return `
+                <div class="sequence-item ${item.executed ? (item.error ? 'error' : 'executed') : ''} ${item.isImported ? 'imported' : ''}" id="seq-item-${item.id}">
+                    <div class="sequence-item-header">
+                        <span>${index + 1}. ${item.endpoint.method} ${item.endpoint.path}</span>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            ${item.isImported ? '<span style="background: #17a2b8; color: white; font-size: 10px; padding: 2px 6px; border-radius: 3px;">IMPORTED</span>' : ''}
+                            <button onclick="explorer.removeFromSequence('${item.id}')" style="background: none; border: none; color: #dc3545; cursor: pointer;">×</button>
+                        </div>
+                    </div>
+                    <div class="sequence-item-content">
+                        <div style="font-size: 12px; color: #6c757d; margin-bottom: 10px;">
+                            ${item.endpoint.summary}
+                            ${item.isImported ? '<br><em>⚠️ This endpoint was imported and may not match current API spec</em>' : ''}
+                        </div>
+                        
+                        ${this.renderParameterSummary(item)}
+                        
+                        ${this.renderVariableMappings(item, index, availableVariables)}
+                        
+                        ${this.renderSequenceParameterEditor(item, index)}
+                        
+                        <div style="margin-top: 10px;">
+                            <button class="sequence-btn sequence-btn-primary" onclick="explorer.executeSequenceItem('${item.id}')" style="font-size: 12px;" ${!this.personalAccessToken ? 'disabled' : ''}>
+                                ${this.personalAccessToken ? 'Execute This Step' : 'Enter PAT to Execute'}
+                            </button>
+                            <button class="sequence-btn sequence-btn-secondary" onclick="explorer.toggleParameterEditor('${item.id}')" style="font-size: 12px; margin-left: 8px;">
+                                ⚙️ Edit Parameters
+                            </button>
+                        </div>
+                        
+                        ${item.executed ? `
+                            <div class="sequence-results">
+                                ${item.error ? 
+                                    `<div class="results-header">
+                                        <span style="color: #dc3545;">❌ Error: ${item.error}</span>
+                                        <div class="results-actions">
+                                            <button class="copy-btn" onclick="explorer.copySequenceResult('${item.id}', 'error')">
+                                                📋 Copy Error
+                                            </button>
+                                        </div>
+                                    </div>` :
+                                    `<div class="results-header">
+                                        <span style="color: #28a745;">✅ Success (${item.result?.data ? Array.isArray(item.result.data) ? item.result.data.length + ' items' : '1 item' : 'No data'})</span>
+                                        <div class="results-actions">
+                                            <button class="copy-btn" onclick="explorer.copySequenceResult('${item.id}', 'json')">
+                                                📋 Copy JSON
+                                            </button>
+                                            <button class="copy-btn" onclick="explorer.copySequenceResult('${item.id}', 'formatted')">
+                                                📄 Copy Formatted
+                                            </button>
+                                            ${item.result?.data && Array.isArray(item.result.data) ? `
+                                                <button class="copy-btn" onclick="explorer.copySequenceResult('${item.id}', 'csv')">
+                                                    📊 Copy CSV
+                                                </button>
+                                            ` : ''}
+                                        </div>
+                                    </div>
+                                     <div style="font-family: 'Courier New', monospace; font-size: 11px; margin-top: 5px; background: #f8f9fa; padding: 8px; border-radius: 4px; max-height: 200px; overflow-y: auto;">
+                                         ${JSON.stringify(item.result, null, 2).substring(0, 500)}${JSON.stringify(item.result).length > 500 ? '...\n\n[Truncated - use Copy buttons for full content]' : ''}
+                                     </div>`
+                                }
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        container.innerHTML = sequenceHTML;
+    }
+
+    getAvailableVariables(currentIndex) {
+        const variables = [];
+        
+        for (let i = 0; i < currentIndex; i++) {
+            const prevItem = this.apiSequence[i];
+            if (prevItem.executed && prevItem.result) {
+                // Extract common variable paths from the result
+                const result = prevItem.result;
+                
+                if (result.data) {
+                    if (Array.isArray(result.data)) {
+                        variables.push({
+                            path: `${prevItem.id}.data[0].gid`,
+                            description: `First item GID from step ${i + 1}`,
+                            example: result.data[0]?.gid
+                        });
+                        variables.push({
+                            path: `${prevItem.id}.data[0].name`,
+                            description: `First item name from step ${i + 1}`,
+                            example: result.data[0]?.name
+                        });
+                    } else {
+                        variables.push({
+                            path: `${prevItem.id}.data.gid`,
+                            description: `GID from step ${i + 1}`,
+                            example: result.data.gid
+                        });
+                        variables.push({
+                            path: `${prevItem.id}.data.name`,
+                            description: `Name from step ${i + 1}`,
+                            example: result.data.name
+                        });
+                    }
+                }
+            }
+        }
+        
+        return variables;
+    }
+
+    renderParameterSummary(item) {
+        const pathParams = Object.entries(item.parameters.path).filter(([key, value]) => value);
+        const queryParams = Object.entries(item.parameters.query).filter(([key, value]) => value && value !== '');
+        const hasBody = item.parameters.body;
+
+        if (pathParams.length === 0 && queryParams.length === 0 && !hasBody) {
+            return '';
+        }
+
+        let html = '<div class="parameter-summary">';
+        
+        if (pathParams.length > 0) {
+            html += '<div class="param-group"><span class="param-label">Path:</span> ';
+            html += pathParams.map(([key, value]) => {
+                const displayValue = this.formatParameterValue(value);
+                return `{${key}}: <span class="param-value">${displayValue}</span>`;
+            }).join(', ');
+            html += '</div>';
+        }
+
+        if (queryParams.length > 0) {
+            html += '<div class="param-group"><span class="param-label">Query:</span> ';
+            html += queryParams.map(([key, value]) => {
+                const displayValue = this.formatParameterValue(value);
+                return `${key}: <span class="param-value">${displayValue}</span>`;
+            }).join(', ');
+            html += '</div>';
+        }
+
+        if (hasBody) {
+            const bodyPreview = item.parameters.body.length > 50 
+                ? item.parameters.body.substring(0, 50) + '...' 
+                : item.parameters.body;
+            html += `<div class="param-group"><span class="param-label">Body:</span> <span class="param-value">${bodyPreview}</span></div>`;
+        }
+
+        html += '</div>';
+        return html;
+    }
+
+    formatParameterValue(value) {
+        if (typeof value === 'string' && value.includes('{{') && value.includes('}}')) {
+            return `<em style="color: #007bff;">${value}</em> (variable)`;
+        }
+        return value;
+    }
+
+    renderSequenceParameterEditor(item, index) {
+        const pathParams = this.extractPathParameters(item.endpoint.path);
+        
+        return `
+            <div id="param-editor-${item.id}" class="sequence-parameter-editor">
+                <div class="param-editor-title">Configure Parameters</div>
+                
+                ${pathParams.length > 0 ? `
+                    <div class="param-editor-section">
+                        <div class="param-editor-title">Path Parameters</div>
+                        ${pathParams.map(param => `
+                            <div style="margin-bottom: 8px;">
+                                <label style="display: block; font-weight: 600; font-size: 12px; margin-bottom: 4px;">
+                                    {${param}} <span style="color: #dc3545;">*</span>
+                                </label>
+                                <div style="display: flex; gap: 5px;">
+                                    <input type="text" 
+                                           class="param-editor-input" 
+                                           id="seq-path-${param}-${item.id}"
+                                           value="${item.parameters.path[param] || ''}"
+                                           placeholder="Enter ${param} or use {{variable}}"
+                                           style="flex: 1;"
+                                           onchange="explorer.updateSequenceParameter('${item.id}', 'path', '${param}', this.value)">
+                                    <button onclick="explorer.showVariableHelper('seq-path-${param}-${item.id}', ${index})"
+                                            style="background: #17a2b8; color: white; border: none; padding: 4px 8px; border-radius: 3px; font-size: 10px;">
+                                        📋 Vars
+                                    </button>
+                                </div>
+                                <div class="param-hint">Use {{stepId.data[0].gid}} for variables</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                ` : ''}
+
+                <div class="param-editor-section">
+                    <div class="param-editor-title">Query Parameters</div>
+                    <div style="margin-bottom: 10px;">
+                        <button onclick="explorer.applyParameterPreset('${item.id}', 'minimal')" 
+                                style="background: #6c757d; color: white; border: none; padding: 4px 8px; border-radius: 3px; font-size: 11px; margin-right: 5px;">
+                            Minimal
+                        </button>
+                        <button onclick="explorer.applyParameterPreset('${item.id}', 'detailed')" 
+                                style="background: #17a2b8; color: white; border: none; padding: 4px 8px; border-radius: 3px; font-size: 11px; margin-right: 5px;">
+                            Detailed
+                        </button>
+                        <button onclick="explorer.applyParameterPreset('${item.id}', 'full')" 
+                                style="background: #28a745; color: white; border: none; padding: 4px 8px; border-radius: 3px; font-size: 11px;">
+                            Full Fields
+                        </button>
+                    </div>
+                    <div class="param-editor-grid">
+                        <input type="text" 
+                               class="param-editor-input" 
+                               id="seq-query-limit-${item.id}"
+                               value="${item.parameters.query.limit || ''}"
+                               placeholder="limit (e.g., 10)"
+                               onchange="explorer.updateSequenceParameter('${item.id}', 'query', 'limit', this.value)">
+                        <input type="text" 
+                               class="param-editor-input" 
+                               id="seq-query-offset-${item.id}"
+                               value="${item.parameters.query.offset || ''}"
+                               placeholder="offset"
+                               onchange="explorer.updateSequenceParameter('${item.id}', 'query', 'offset', this.value)">
+                        <input type="text" 
+                               class="param-editor-input" 
+                               id="seq-query-opt_fields-${item.id}"
+                               value="${item.parameters.query.opt_fields || ''}"
+                               placeholder="opt_fields (e.g., name,gid)"
+                               onchange="explorer.updateSequenceParameter('${item.id}', 'query', 'opt_fields', this.value)">
+                        <input type="text" 
+                               class="param-editor-input" 
+                               id="seq-query-opt_expand-${item.id}"
+                               value="${item.parameters.query.opt_expand || ''}"
+                               placeholder="opt_expand"
+                               onchange="explorer.updateSequenceParameter('${item.id}', 'query', 'opt_expand', this.value)">
+                    </div>
+                    
+                    ${this.renderEndpointSpecificQueryParams(item)}
+                </div>
+
+                ${['POST', 'PUT', 'PATCH'].includes(item.endpoint.method) ? `
+                    <div class="param-editor-section">
+                        <div class="param-editor-title">Request Body (JSON)</div>
+                        <textarea class="param-editor-textarea"
+                                  id="seq-body-${item.id}"
+                                  placeholder="Enter JSON request body"
+                                  onchange="explorer.updateSequenceParameter('${item.id}', 'body', null, this.value)">${item.parameters.body || ''}</textarea>
+                        <div class="param-hint">Use {{variable}} placeholders for dynamic values</div>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }
+
+    renderEndpointSpecificQueryParams(item) {
+        const path = item.endpoint.path.toLowerCase();
+        let specificParams = [];
+
+        if (path.includes('/projects')) {
+            specificParams = [
+                { name: 'workspace', placeholder: 'workspace GID or {{variable}}' },
+                { name: 'team', placeholder: 'team GID' },
+                { name: 'archived', placeholder: 'true/false' }
+            ];
+        } else if (path.includes('/tasks')) {
+            specificParams = [
+                { name: 'project', placeholder: 'project GID or {{variable}}' },
+                { name: 'assignee', placeholder: 'assignee GID' },
+                { name: 'workspace', placeholder: 'workspace GID or {{variable}}' },
+                { name: 'completed_since', placeholder: 'YYYY-MM-DD' }
+            ];
+        } else if (path.includes('/users')) {
+            specificParams = [
+                { name: 'workspace', placeholder: 'workspace GID or {{variable}}' },
+                { name: 'team', placeholder: 'team GID' }
+            ];
+        }
+
+        if (specificParams.length === 0) {
+            return '';
+        }
+
+        return `
+            <div style="margin-top: 12px;">
+                <div style="font-weight: 600; font-size: 12px; margin-bottom: 8px; color: #6c757d;">
+                    Endpoint-Specific Parameters
+                </div>
+                <div class="param-editor-grid">
+                    ${specificParams.map(param => `
+                        <input type="text" 
+                               class="param-editor-input" 
+                               id="seq-query-${param.name}-${item.id}"
+                               value="${item.parameters.query[param.name] || ''}"
+                               placeholder="${param.placeholder}"
+                               onchange="explorer.updateSequenceParameter('${item.id}', 'query', '${param.name}', this.value)">
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    toggleParameterEditor(itemId) {
+        const editor = document.getElementById(`param-editor-${itemId}`);
+        if (editor) {
+            editor.classList.toggle('show');
+        }
+    }
+
+    updateSequenceParameter(itemId, paramType, paramName, value) {
+        const item = this.apiSequence.find(item => item.id === itemId);
+        if (!item) return;
+
+        if (paramType === 'path') {
+            item.parameters.path[paramName] = value;
+        } else if (paramType === 'query') {
+            if (value && value.trim()) {
+                item.parameters.query[paramName] = value.trim();
+            } else {
+                delete item.parameters.query[paramName];
+            }
+        } else if (paramType === 'body') {
+            item.parameters.body = value;
+        }
+
+        // Update the parameter summary display
+        this.renderSequence();
+    }
+
+    applyParameterPreset(itemId, presetType) {
+        const item = this.apiSequence.find(item => item.id === itemId);
+        if (!item) return;
+
+        const path = item.endpoint.path.toLowerCase();
+        
+        let presets = {
+            minimal: {
+                limit: '10',
+                opt_fields: 'gid,name'
+            },
+            detailed: {
+                limit: '20',
+                opt_fields: 'gid,name,created_at,modified_at'
+            },
+            full: {
+                limit: '50',
+                opt_fields: this.getFullFieldsForEndpoint(path)
+            }
+        };
+
+        // Apply endpoint-specific presets
+        if (path.includes('/tasks')) {
+            presets.minimal.opt_fields = 'gid,name,completed';
+            presets.detailed.opt_fields = 'gid,name,completed,assignee.name,due_date,created_at';
+            presets.full.opt_fields = 'gid,name,completed,assignee,due_date,notes,created_at,modified_at,projects.name,tags.name';
+        } else if (path.includes('/projects')) {
+            presets.minimal.opt_fields = 'gid,name,completed';
+            presets.detailed.opt_fields = 'gid,name,completed,team.name,created_at,modified_at';
+            presets.full.opt_fields = 'gid,name,completed,notes,team,members.name,created_at,modified_at,archived,color';
+        } else if (path.includes('/workspaces')) {
+            presets.minimal.opt_fields = 'gid,name';
+            presets.detailed.opt_fields = 'gid,name,is_organization';
+            presets.full.opt_fields = 'gid,name,is_organization,email_domains';
+        }
+
+        const preset = presets[presetType];
+        if (preset) {
+            Object.entries(preset).forEach(([key, value]) => {
+                item.parameters.query[key] = value;
+                
+                // Update the input field
+                const input = document.getElementById(`seq-query-${key}-${itemId}`);
+                if (input) {
+                    input.value = value;
+                }
+            });
+
+            this.renderSequence();
+            this.showSequenceMessage(`✅ Applied ${presetType} parameter preset`, 'success');
+        }
+    }
+
+    getFullFieldsForEndpoint(path) {
+        if (path.includes('/tasks')) {
+            return 'gid,name,completed,assignee,due_date,notes,created_at,modified_at,projects.name,tags.name,subtasks.name';
+        } else if (path.includes('/projects')) {
+            return 'gid,name,completed,notes,team,members.name,created_at,modified_at,archived,color,due_date';
+        } else if (path.includes('/users')) {
+            return 'gid,name,email,photo.image_128x128,workspaces.name';
+        } else if (path.includes('/workspaces')) {
+            return 'gid,name,is_organization,email_domains';
+        }
+        return 'gid,name,created_at,modified_at';
+    }
+
+    showVariableHelper(inputId, currentIndex) {
+        const availableVariables = this.getAvailableVariables(currentIndex);
+        
+        if (availableVariables.length === 0) {
+            this.showSequenceMessage('ℹ️ No variables available. Execute previous steps first.', 'info');
+            return;
+        }
+
+        // Create a simple dropdown/popup with available variables
+        const input = document.getElementById(inputId);
+        if (!input) return;
+
+        const variableList = availableVariables.map(variable => 
+            `<div style="padding: 8px; cursor: pointer; border-bottom: 1px solid #eee;" 
+                  onclick="explorer.insertVariable('${inputId}', '{{${variable.path}}}')">
+                <strong>${variable.path}</strong><br>
+                <small style="color: #6c757d;">${variable.description} → ${variable.example}</small>
+            </div>`
+        ).join('');
+
+        // Remove existing helper if any
+        const existingHelper = document.getElementById('variable-helper');
+        if (existingHelper) {
+            existingHelper.remove();
+        }
+
+        // Create helper popup
+        const helper = document.createElement('div');
+        helper.id = 'variable-helper';
+        helper.innerHTML = `
+            <div style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+                        background: white; border: 1px solid #dee2e6; border-radius: 8px; 
+                        box-shadow: 0 4px 20px rgba(0,0,0,0.15); z-index: 10001; max-width: 400px; max-height: 300px; overflow-y: auto;">
+                <div style="padding: 15px; border-bottom: 1px solid #eee; background: #f8f9fa; font-weight: 600;">
+                    Available Variables
+                    <button onclick="document.getElementById('variable-helper').remove()" 
+                            style="float: right; background: none; border: none; font-size: 18px; cursor: pointer;">&times;</button>
+                </div>
+                <div>
+                    ${variableList}
+                </div>
+            </div>
+            <div style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000;" 
+                 onclick="document.getElementById('variable-helper').remove()"></div>
+        `;
+
+        document.body.appendChild(helper);
+    }
+
+    insertVariable(inputId, variableText) {
+        const input = document.getElementById(inputId);
+        if (input) {
+            input.value = variableText;
+            input.dispatchEvent(new Event('change'));
+        }
+
+        // Close the helper
+        const helper = document.getElementById('variable-helper');
+        if (helper) {
+            helper.remove();
+        }
+    }
+
+    async copySequenceResult(itemId, format) {
+        const item = this.apiSequence.find(item => item.id === itemId);
+        if (!item || !item.executed) {
+            this.showSequenceMessage('❌ No result to copy', 'error');
+            return;
+        }
+
+        let content = '';
+        let mimeType = 'text/plain';
+
+        try {
+            switch (format) {
+                case 'json':
+                    content = JSON.stringify(item.result, null, 2);
+                    mimeType = 'application/json';
+                    break;
+
+                case 'formatted':
+                    content = this.formatResultForCopy(item);
+                    break;
+
+                case 'csv':
+                    if (item.result?.data && Array.isArray(item.result.data)) {
+                        content = this.convertToCSV(item.result.data);
+                        mimeType = 'text/csv';
+                    } else {
+                        this.showSequenceMessage('❌ CSV format only available for array data', 'error');
+                        return;
+                    }
+                    break;
+
+                case 'error':
+                    content = `API Error Details:
+Endpoint: ${item.endpoint.method} ${item.endpoint.path}
+Error: ${item.error}
+Timestamp: ${new Date().toISOString()}
+
+Full Error Response:
+${item.result ? JSON.stringify(item.result, null, 2) : 'No response data'}`;
+                    break;
+
+                default:
+                    content = JSON.stringify(item.result, null, 2);
+            }
+
+            // Use the modern Clipboard API
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(content);
+                this.showCopyFeedback(itemId, format);
+            } else {
+                // Fallback for older browsers
+                this.fallbackCopyToClipboard(content);
+                this.showCopyFeedback(itemId, format);
+            }
+
+        } catch (error) {
+            console.error('Copy failed:', error);
+            this.showSequenceMessage('❌ Failed to copy to clipboard', 'error');
+        }
+    }
+
+    formatResultForCopy(item) {
+        const timestamp = new Date().toISOString();
+        const endpoint = `${item.endpoint.method} ${item.endpoint.path}`;
+        
+        let formatted = `Asana API Result
+Endpoint: ${endpoint}
+Summary: ${item.endpoint.summary}
+Timestamp: ${timestamp}
+Status: ${item.error ? 'Error' : 'Success'}
+
+`;
+
+        if (item.error) {
+            formatted += `Error: ${item.error}\n\n`;
+        }
+
+        if (item.result?.data) {
+            if (Array.isArray(item.result.data)) {
+                formatted += `Results: ${item.result.data.length} items\n\n`;
+                
+                item.result.data.forEach((dataItem, index) => {
+                    formatted += `Item ${index + 1}:\n`;
+                    formatted += `  GID: ${dataItem.gid || 'N/A'}\n`;
+                    formatted += `  Name: ${dataItem.name || 'N/A'}\n`;
+                    
+                    // Add other common fields
+                    if (dataItem.completed !== undefined) {
+                        formatted += `  Completed: ${dataItem.completed}\n`;
+                    }
+                    if (dataItem.due_date) {
+                        formatted += `  Due Date: ${dataItem.due_date}\n`;
+                    }
+                    if (dataItem.assignee?.name) {
+                        formatted += `  Assignee: ${dataItem.assignee.name}\n`;
+                    }
+                    formatted += '\n';
+                });
+            } else {
+                formatted += `Result:\n`;
+                formatted += `  GID: ${item.result.data.gid || 'N/A'}\n`;
+                formatted += `  Name: ${item.result.data.name || 'N/A'}\n`;
+                
+                Object.entries(item.result.data).forEach(([key, value]) => {
+                    if (key !== 'gid' && key !== 'name' && value !== null && value !== undefined) {
+                        formatted += `  ${key}: ${typeof value === 'object' ? JSON.stringify(value) : value}\n`;
+                    }
+                });
+            }
+        }
+
+        formatted += '\n--- Raw JSON ---\n';
+        formatted += JSON.stringify(item.result, null, 2);
+
+        return formatted;
+    }
+
+    convertToCSV(data) {
+        if (!data || !Array.isArray(data) || data.length === 0) {
+            return '';
+        }
+
+        // Get all unique keys from all objects
+        const allKeys = new Set();
+        data.forEach(item => {
+            Object.keys(item).forEach(key => {
+                allKeys.add(key);
+            });
+        });
+
+        const headers = Array.from(allKeys);
+        
+        // Create CSV content
+        let csv = headers.join(',') + '\n';
+        
+        data.forEach(item => {
+            const row = headers.map(header => {
+                let value = item[header];
+                
+                // Handle complex objects
+                if (typeof value === 'object' && value !== null) {
+                    if (value.name) {
+                        value = value.name; // For nested objects like assignee.name
+                    } else if (value.gid) {
+                        value = value.gid; // For nested objects with GID
+                    } else {
+                        value = JSON.stringify(value);
+                    }
+                }
+                
+                // Escape commas and quotes
+                if (typeof value === 'string') {
+                    if (value.includes(',') || value.includes('"') || value.includes('\n')) {
+                        value = '"' + value.replace(/"/g, '""') + '"';
+                    }
+                }
+                
+                return value || '';
+            });
+            
+            csv += row.join(',') + '\n';
+        });
+
+        return csv;
+    }
+
+    fallbackCopyToClipboard(text) {
+        // Create a temporary textarea element
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        
+        try {
+            document.execCommand('copy');
+        } catch (err) {
+            console.error('Fallback copy failed:', err);
+        }
+        
+        document.body.removeChild(textArea);
+    }
+
+    showCopyFeedback(itemId, format) {
+        // Find the copy button that was clicked and show feedback
+        const buttons = document.querySelectorAll(`[onclick*="copySequenceResult('${itemId}', '${format}')"]`);
+        buttons.forEach(button => {
+            const originalText = button.textContent;
+            button.textContent = '✅ Copied!';
+            button.classList.add('copied');
+            
+            setTimeout(() => {
+                button.textContent = originalText;
+                button.classList.remove('copied');
+            }, 2000);
+        });
+
+        // Show success message
+        const formatNames = {
+            json: 'JSON',
+            formatted: 'Formatted Text',
+            csv: 'CSV',
+            error: 'Error Details'
+        };
+        
+        this.showSequenceMessage(`✅ ${formatNames[format]} copied to clipboard!`, 'success');
+    }
+
+    async copyAllResults() {
+        const executedItems = this.apiSequence.filter(item => item.executed);
+        
+        if (executedItems.length === 0) {
+            this.showSequenceMessage('❌ No executed sequence results to copy', 'error');
+            return;
+        }
+
+        const timestamp = new Date().toISOString();
+        let allResults = `Asana API Sequence Results
+Generated: ${timestamp}
+Total Steps: ${this.apiSequence.length}
+Executed Steps: ${executedItems.length}
+
+===============================================
+
+`;
+
+        executedItems.forEach((item, index) => {
+            allResults += `Step ${this.apiSequence.indexOf(item) + 1}: ${item.endpoint.method} ${item.endpoint.path}
+Summary: ${item.endpoint.summary}
+Status: ${item.error ? 'ERROR' : 'SUCCESS'}
+
+`;
+
+            if (item.error) {
+                allResults += `Error: ${item.error}\n\n`;
+            } else if (item.result) {
+                if (item.result.data && Array.isArray(item.result.data)) {
+                    allResults += `Results: ${item.result.data.length} items\n`;
+                    
+                    // Show first few items as preview
+                    const preview = item.result.data.slice(0, 3);
+                    preview.forEach((dataItem, i) => {
+                        allResults += `  ${i + 1}. ${dataItem.name || dataItem.gid || 'Unnamed'}\n`;
+                    });
+                    
+                    if (item.result.data.length > 3) {
+                        allResults += `  ... and ${item.result.data.length - 3} more items\n`;
+                    }
+                } else if (item.result.data) {
+                    allResults += `Result: ${item.result.data.name || item.result.data.gid || 'Single item'}\n`;
+                }
+                allResults += '\n';
+            }
+
+            allResults += '--- Raw JSON ---\n';
+            allResults += JSON.stringify(item.result, null, 2);
+            allResults += '\n\n===============================================\n\n';
+        });
+
+        try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(allResults);
+            } else {
+                this.fallbackCopyToClipboard(allResults);
+            }
+            
+            this.showSequenceMessage(`✅ All results (${executedItems.length} steps) copied to clipboard!`, 'success');
+        } catch (error) {
+            console.error('Copy all results failed:', error);
+            this.showSequenceMessage('❌ Failed to copy results to clipboard', 'error');
+        }
+    }
+
+    renderVariableMappings(item, itemIndex, availableVariables) {
+        if (availableVariables.length === 0) {
+            return '';
+        }
+
+        const pathParams = this.extractPathParameters(item.endpoint.path);
+        if (pathParams.length === 0) {
+            return '';
+        }
+
+        return `
+            <div class="variable-mapping">
+                <div style="font-weight: 600; margin-bottom: 8px; font-size: 13px;">Variable Mapping</div>
+                ${pathParams.map(param => `
+                    <div style="margin-bottom: 8px;">
+                        <label>Map {${param}} to:</label>
+                        <select id="mapping-${item.id}-${param}" onchange="explorer.updateVariableMapping('${item.id}', '${param}', this.value)">
+                            <option value="">Use original value: ${item.parameters.path[param] || 'Not set'}</option>
+                            ${availableVariables.map(variable => `
+                                <option value="${variable.path}" ${item.variableMappings[param] === variable.path ? 'selected' : ''}>
+                                    ${variable.description} (${variable.example})
+                                </option>
+                            `).join('')}
+                        </select>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+
+    updateVariableMapping(itemId, paramName, variablePath) {
+        const item = this.apiSequence.find(item => item.id === itemId);
+        if (item) {
+            if (variablePath) {
+                item.variableMappings[paramName] = variablePath;
+            } else {
+                delete item.variableMappings[paramName];
+            }
+        }
+    }
+
+    async executeSequence() {
+        for (let i = 0; i < this.apiSequence.length; i++) {
+            const item = this.apiSequence[i];
+            try {
+                await this.executeSequenceItem(item.id);
+                if (item.error) {
+                    console.error(`Sequence stopped at step ${i + 1} due to error:`, item.error);
+                    break;
+                }
+            } catch (error) {
+                console.error(`Sequence stopped at step ${i + 1}:`, error);
+                break;
+            }
+        }
+    }
+
+    async executeSequenceItem(itemId) {
+        const item = this.apiSequence.find(item => item.id === itemId);
+        if (!item) return;
+
+        try {
+            // Reset previous state
+            item.executed = false;
+            item.result = null;
+            item.error = null;
+
+            // Set current sequence item context for parameter building
+            this.currentSequenceItem = item;
+
+            // Build URL with variable substitution
+            let url = `${this.baseUrl}${item.endpoint.path}`;
+            
+            // Apply variable mappings to path parameters
+            const pathParams = this.extractPathParameters(item.endpoint.path);
+            pathParams.forEach(param => {
+                let value = item.parameters.path[param];
+                
+                // Check if there's a variable mapping
+                if (item.variableMappings[param]) {
+                    value = this.resolveVariable(item.variableMappings[param]);
+                }
+                
+                // Check if value contains variable placeholder
+                if (typeof value === 'string' && value && value.includes('{{') && value.includes('}}')) {
+                    value = this.resolveVariablePlaceholder(value);
+                }
+                
+                if (value) {
+                    url = url.replace(`{${param}}`, encodeURIComponent(value));
+                }
+            });
+
+            // Build query parameters with variable substitution
+            const queryParams = this.buildQueryParameters(-1); // Use -1 to indicate sequence execution
+            
+            if (queryParams.toString()) {
+                url += `?${queryParams.toString()}`;
+            }
+
+            // Prepare request
+            const fetchOptions = {
+                method: item.endpoint.method,
+                headers: {
+                    'Authorization': `Bearer ${this.personalAccessToken}`,
+                    'Accept': 'application/json'
+                }
+            };
+
+            if (item.parameters.body && ['POST', 'PUT', 'PATCH'].includes(item.endpoint.method)) {
+                fetchOptions.headers['Content-Type'] = 'application/json';
+                fetchOptions.body = item.parameters.body;
+            }
+
+            // Execute request
+            const response = await fetch(url, fetchOptions);
+            const responseData = await response.json();
+
+            if (response.ok) {
+                item.result = responseData;
+                item.executed = true;
+                this.sequenceResults.set(item.id, responseData);
+            } else {
+                item.error = `${response.status}: ${responseData.errors?.[0]?.message || 'API call failed'}`;
+                item.executed = true;
+            }
+
+        } catch (error) {
+            item.error = `Network Error: ${error.message}`;
+            item.executed = true;
+        } finally {
+            // Clear sequence item context
+            this.currentSequenceItem = null;
+        }
+
+        this.renderSequence();
+    }
+
+    resolveVariable(variablePath) {
+        const [itemId, ...pathParts] = variablePath.split('.');
+        const result = this.sequenceResults.get(itemId);
+        
+        console.log(`Resolving variable path: ${variablePath}`);
+        console.log(`ItemId: ${itemId}, Available results:`, Array.from(this.sequenceResults.keys()));
+        
+        if (!result) {
+            console.log(`No result found for itemId: ${itemId}`);
+            return null;
+        }
+        
+        let value = result;
+        console.log(`Starting with result:`, result);
+        
+        for (const part of pathParts) {
+            if (part.includes('[') && part.includes(']')) {
+                // Handle array access like data[0]
+                const [arrayName, indexStr] = part.split('[');
+                const index = parseInt(indexStr.replace(']', ''));
+                value = value[arrayName]?.[index];
+                console.log(`Accessing ${arrayName}[${index}]:`, value);
+            } else {
+                value = value[part];
+                console.log(`Accessing ${part}:`, value);
+            }
+            
+            if (value === undefined || value === null) {
+                console.log(`Value became null/undefined at part: ${part}`);
+                return null;
+            }
+        }
+        
+        console.log(`Final resolved value:`, value);
+        return value;
+    }
+
+    removeFromSequence(itemId) {
+        this.apiSequence = this.apiSequence.filter(item => item.id !== itemId);
+        this.sequenceResults.delete(itemId);
+        this.renderSequence();
+    }
+
+    clearSequence() {
+        this.apiSequence = [];
+        this.sequenceResults.clear();
+        this.renderSequence();
+    }
+
+    exportSequence() {
+        if (this.apiSequence.length === 0) {
+            alert('No sequence to export. Add some endpoints first.');
+            return;
+        }
+
+        const exportData = {
+            version: "1.0",
+            name: `Asana API Sequence - ${new Date().toLocaleDateString()}`,
+            description: `API sequence with ${this.apiSequence.length} endpoints`,
+            sequence: this.apiSequence.map(item => ({
+                method: item.endpoint.method,
+                path: item.endpoint.path,
+                summary: item.endpoint.summary,
+                description: item.endpoint.description,
+                tags: item.endpoint.tags,
+                parameters: item.parameters,
+                variableMappings: item.variableMappings
+            })),
+            timestamp: new Date().toISOString(),
+            baseUrl: this.baseUrl
+        };
+
+        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `asana-api-sequence-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        // Show success message
+        this.showSequenceMessage('✅ Sequence exported successfully!', 'success');
+    }
+
+    importSequence() {
+        const fileInput = document.getElementById('sequenceFileInput');
+        fileInput.click();
+    }
+
+    handleSequenceFile(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        if (file.type !== 'application/json') {
+            this.showSequenceMessage('❌ Please select a JSON file.', 'error');
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const importData = JSON.parse(e.target.result);
+                this.loadSequenceFromData(importData);
+            } catch (error) {
+                this.showSequenceMessage('❌ Invalid JSON file format.', 'error');
+                console.error('Import error:', error);
+            }
+        };
+        reader.readAsText(file);
+
+        // Clear the file input for next use
+        event.target.value = '';
+    }
+
+    loadSequenceFromData(importData) {
+        try {
+            // Validate import data structure
+            if (!importData.sequence || !Array.isArray(importData.sequence)) {
+                throw new Error('Invalid sequence format: missing or invalid sequence array');
+            }
+
+            // Clear existing sequence if user confirms
+            if (this.apiSequence.length > 0) {
+                if (!confirm('This will replace your current sequence. Continue?')) {
+                    return;
+                }
+            }
+
+            // Clear current state
+            this.clearSequence();
+
+            // Convert imported data to internal format
+            let loadedCount = 0;
+            let skippedCount = 0;
+
+            importData.sequence.forEach((importItem, index) => {
+                try {
+                    // Find matching endpoint in current endpoints
+                    const matchingEndpoint = this.endpoints.find(ep => 
+                        ep.method === importItem.method && ep.path === importItem.path
+                    );
+
+                    if (matchingEndpoint) {
+                        // Create sequence item
+                        const sequenceItem = {
+                            id: `seq_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                            endpoint: matchingEndpoint,
+                            endpointIndex: -1, // Will be set when needed
+                            parameters: importItem.parameters || { path: {}, query: {}, body: null },
+                            variableMappings: importItem.variableMappings || {},
+                            executed: false,
+                            result: null,
+                            error: null
+                        };
+
+                        this.apiSequence.push(sequenceItem);
+                        loadedCount++;
+                    } else {
+                        // Create a placeholder endpoint if not found
+                        const placeholderEndpoint = {
+                            method: importItem.method,
+                            path: importItem.path,
+                            summary: importItem.summary || 'Imported endpoint',
+                            description: importItem.description || 'This endpoint was imported but not found in current API spec',
+                            tags: importItem.tags || ['imported'],
+                            operationId: `imported_${index}`,
+                            security: ['oauth2']
+                        };
+
+                        const sequenceItem = {
+                            id: `seq_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                            endpoint: placeholderEndpoint,
+                            endpointIndex: -1,
+                            parameters: importItem.parameters || { path: {}, query: {}, body: null },
+                            variableMappings: importItem.variableMappings || {},
+                            executed: false,
+                            result: null,
+                            error: null,
+                            isImported: true // Flag to indicate this was imported
+                        };
+
+                        this.apiSequence.push(sequenceItem);
+                        loadedCount++;
+                    }
+                } catch (itemError) {
+                    console.warn(`Skipping invalid sequence item ${index}:`, itemError);
+                    skippedCount++;
+                }
+            });
+
+            // Show results
+            if (loadedCount > 0) {
+                this.renderSequence();
+                const message = skippedCount > 0 
+                    ? `✅ Loaded ${loadedCount} endpoints (${skippedCount} skipped due to errors)`
+                    : `✅ Successfully loaded ${loadedCount} endpoints`;
+                this.showSequenceMessage(message, 'success');
+
+                // Auto-open sequence panel
+                if (!this.sequencePanelOpen) {
+                    this.toggleSequencePanel();
+                }
+            } else {
+                this.showSequenceMessage('❌ No valid endpoints found in the imported file.', 'error');
+            }
+
+        } catch (error) {
+            this.showSequenceMessage('❌ Failed to import sequence: ' + error.message, 'error');
+            console.error('Import error:', error);
+        }
+    }
+
+    showSequenceMessage(message, type) {
+        // Create a temporary message element
+        const messageDiv = document.createElement('div');
+        messageDiv.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 440px;
+            background: ${type === 'success' ? '#d4edda' : '#f8d7da'};
+            color: ${type === 'success' ? '#155724' : '#721c24'};
+            border: 1px solid ${type === 'success' ? '#c3e6cb' : '#f5c6cb'};
+            padding: 12px 20px;
+            border-radius: 5px;
+            z-index: 10000;
+            font-weight: 600;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        `;
+        messageDiv.textContent = message;
+
+        document.body.appendChild(messageDiv);
+
+        // Auto-remove after 4 seconds
+        setTimeout(() => {
+            if (messageDiv.parentNode) {
+                messageDiv.parentNode.removeChild(messageDiv);
+            }
+        }, 4000);
+    }
+
+    loadSampleSequence() {
+        const sampleSequence = {
+            version: "1.0",
+            name: "Sample Workspace → Projects Flow",
+            description: "Demonstrates workspace to projects API workflow pattern",
+            sequence: [
+                {
+                    method: "GET",
+                    path: "/workspaces",
+                    summary: "Get available workspaces",
+                    description: "Retrieves all workspaces accessible to the authenticated user",
+                    tags: ["workspaces"],
+                    parameters: {
+                        path: {},
+                        query: {
+                            limit: "10",
+                            opt_fields: "gid,name,is_organization"
+                        },
+                        body: null
+                    },
+                    variableMappings: {}
+                },
+                {
+                    method: "GET", 
+                    path: "/projects",
+                    summary: "Get projects in workspace",
+                    description: "Retrieves projects from the first workspace",
+                    tags: ["projects"],
+                    parameters: {
+                        path: {},
+                        query: {
+                            limit: "5",
+                            opt_fields: "gid,name,completed,archived"
+                        },
+                        body: null
+                    },
+                    variableMappings: {}
+                }
+            ],
+            timestamp: new Date().toISOString(),
+            baseUrl: "https://app.asana.com/api/1.0"
+        };
+
+        // Clear existing sequence if user confirms
+        if (this.apiSequence.length > 0) {
+            if (!confirm('This will replace your current sequence with a sample workflow. Continue?')) {
+                return;
+            }
+        }
+
+        this.loadSequenceFromData(sampleSequence);
+        
+        // After loading, set up variable mappings for the sample
+        setTimeout(() => {
+            this.setupSampleVariableMappings();
+        }, 100);
+    }
+
+    setupSampleVariableMappings() {
+        // For the sample, we need to set up query parameter mappings
+        // Step 2: Set workspace query parameter from step 1 result
+        if (this.apiSequence.length >= 2) {
+            const step1 = this.apiSequence[0];
+            const step2 = this.apiSequence[1];
+            
+            // Add workspace to query parameters with variable mapping
+            step2.parameters.query.workspace = `{{${step1.id}.data[0].gid}}`;
+            
+            console.log(`Setting up variable mapping: step2 workspace = {{${step1.id}.data[0].gid}}`);
+        }
+
+        this.renderSequence();
+        this.showSequenceMessage('🎯 Sample sequence loaded! Step 2 will use workspace GID from step 1. Execute step 1 first to populate the workspace data.', 'success');
     }
 }
 
