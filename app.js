@@ -1220,6 +1220,7 @@ class AsanaAPIExplorer {
             this.updatePatStatus('', '');
             this.savePATToStorage();
             this.renderEndpoints(); // Re-render to update execute buttons
+            this.updateExecuteButtonStatus(); // Update sequence execute button
         });
 
         // Toggle PAT visibility
@@ -1521,6 +1522,7 @@ class AsanaAPIExplorer {
             }
             this.updatePatStatus('PAT cleared from storage', 'info');
             this.renderEndpoints();
+            this.updateExecuteButtonStatus(); // Update sequence execute button
         } catch (error) {
             console.warn('Failed to clear PAT from localStorage:', error);
         }
@@ -1969,10 +1971,49 @@ ${responseHeaders}</div>
 
         container.innerHTML = sequenceHTML;
 
+        // Update execute button status
+        this.updateExecuteButtonStatus();
+
         // Restore parameter values to form fields after rendering
         setTimeout(() => {
             this.restoreParametersToForms();
         }, 50);
+    }
+
+    updateExecuteButtonStatus() {
+        const executeBtn = document.querySelector('button[onclick="explorer.executeSequence()"]');
+        if (!executeBtn) return;
+
+        const hasVariableMappings = this.apiSequence.some(item => 
+            item.variableMappings && Object.keys(item.variableMappings).length > 0
+        );
+
+        const hasToken = !!this.personalAccessToken;
+        const hasSequence = this.apiSequence.length > 0;
+
+        if (hasSequence && hasToken) {
+            executeBtn.disabled = false;
+            if (hasVariableMappings) {
+                executeBtn.innerHTML = '🚀 Execute All (Ready)';
+                executeBtn.className = 'sequence-btn sequence-btn-success';
+                executeBtn.style.background = '#28a745';
+                executeBtn.style.borderColor = '#28a745';
+            } else {
+                executeBtn.innerHTML = '▶ Execute All';
+                executeBtn.className = 'sequence-btn sequence-btn-success';
+                executeBtn.style.background = '';
+                executeBtn.style.borderColor = '';
+            }
+        } else {
+            executeBtn.disabled = true;
+            if (!hasToken) {
+                executeBtn.innerHTML = '🔑 Set PAT to Execute';
+                executeBtn.className = 'sequence-btn sequence-btn-warning';
+            } else {
+                executeBtn.innerHTML = '▶ Execute All';
+                executeBtn.className = 'sequence-btn sequence-btn-success';
+            }
+        }
     }
 
     getAvailableVariables(currentIndex) {
@@ -3097,18 +3138,66 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
     }
 
     async executeSequence() {
+        if (this.apiSequence.length === 0) {
+            alert('No endpoints in sequence to execute.');
+            return;
+        }
+
+        if (!this.personalAccessToken) {
+            alert('Personal Access Token is required to execute the sequence.');
+            return;
+        }
+
+        console.log('🚀 Starting full sequence execution...');
+        
+        // Show progress indication
+        const executeBtn = document.querySelector('button[onclick="explorer.executeSequence()"]');
+        const originalText = executeBtn.innerHTML;
+        
         for (let i = 0; i < this.apiSequence.length; i++) {
             const item = this.apiSequence[i];
+            
+            // Update button to show progress
+            executeBtn.innerHTML = `⏳ Executing ${i + 1}/${this.apiSequence.length}`;
+            executeBtn.disabled = true;
+            
+            console.log(`📡 Executing step ${i + 1}: ${item.endpoint.method} ${item.endpoint.path}`);
+            
             try {
                 await this.executeSequenceItem(item.id);
+                
                 if (item.error) {
-                    console.error(`Sequence stopped at step ${i + 1} due to error:`, item.error);
+                    console.error(`❌ Sequence stopped at step ${i + 1} due to error:`, item.error);
+                    alert(`Sequence execution stopped at step ${i + 1} due to an error. Check the console for details.`);
                     break;
                 }
+                
+                console.log(`✅ Step ${i + 1} completed successfully`);
+                
+                // Add a small delay between calls to be respectful to the API
+                if (i < this.apiSequence.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                
             } catch (error) {
-                console.error(`Sequence stopped at step ${i + 1}:`, error);
+                console.error(`❌ Sequence stopped at step ${i + 1}:`, error);
+                alert(`Sequence execution failed at step ${i + 1}: ${error.message}`);
                 break;
             }
+        }
+        
+        // Restore button
+        executeBtn.innerHTML = originalText;
+        executeBtn.disabled = false;
+        
+        console.log('🏁 Sequence execution completed');
+        
+        // Check if all items completed successfully
+        const completedItems = this.apiSequence.filter(item => item.executed && !item.error);
+        if (completedItems.length === this.apiSequence.length) {
+            console.log(`🎉 All ${completedItems.length} steps completed successfully!`);
+        } else {
+            console.log(`⚠️ Sequence completed with ${completedItems.length}/${this.apiSequence.length} successful steps`);
         }
     }
 
@@ -3412,6 +3501,23 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
                 // Auto-open sequence panel
                 if (!this.sequencePanelOpen) {
                     this.toggleSequencePanel();
+                }
+
+                // Check if sequence has variable mappings and suggest execution
+                const hasVariableMappings = this.apiSequence.some(item => 
+                    item.variableMappings && Object.keys(item.variableMappings).length > 0
+                );
+                
+                if (hasVariableMappings && this.personalAccessToken) {
+                    setTimeout(() => {
+                        if (confirm('This sequence has variable mappings configured. Would you like to execute the full sequence now?')) {
+                            this.executeSequence();
+                        }
+                    }, 1000);
+                } else if (hasVariableMappings && !this.personalAccessToken) {
+                    setTimeout(() => {
+                        alert('This sequence has variable mappings configured. Set your Personal Access Token to execute the full sequence.');
+                    }, 1000);
                 }
 
                 // Restore parameter values to form fields after a short delay
