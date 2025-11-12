@@ -15,7 +15,16 @@ class AsanaAPIExplorer {
         this.sequencePanelOpen = false;
         this.currentSequenceItem = null; // Current item being executed
         
+        // Panel resize management
+        this.panelWidthStorageKey = 'asana-api-explorer-panel-width';
+        this.defaultPanelWidth = 400;
+        this.minPanelWidth = 300;
+        this.maxPanelWidth = window.innerWidth * 0.8;
+        this.currentPanelWidth = this.defaultPanelWidth;
+        this.isResizing = false;
+        
         this.loadPATFromStorage();
+        this.loadPanelWidth();
         this.init();
     }
 
@@ -23,9 +32,15 @@ class AsanaAPIExplorer {
         try {
             await this.loadAsanaAPISpec();
             this.setupEventListeners();
+            this.setupPanelResize();
             this.restorePATToInput();
             this.renderEndpoints();
             this.updateStats();
+            
+            // Apply panel width after everything is set up
+            setTimeout(() => {
+                this.applyPanelWidth();
+            }, 100);
         } catch (error) {
             this.showError('Failed to load Asana API specification: ' + error.message);
         }
@@ -1810,16 +1825,166 @@ ${responseHeaders}</div>
 
     // Sequence Management Methods
     toggleSequencePanel() {
+        console.log('Toggling sequence panel, current state:', this.sequencePanelOpen);
         const panel = document.getElementById('sequencePanel');
+        
+        if (!panel) {
+            console.error('Sequence panel element not found');
+            return;
+        }
+        
+        console.log('Current panel width:', this.currentPanelWidth);
+        console.log('Panel current style:', {
+            width: panel.style.width,
+            right: panel.style.right
+        });
+        
         this.sequencePanelOpen = !this.sequencePanelOpen;
         
         if (this.sequencePanelOpen) {
+            // Ensure panel dimensions are set
+            if (!this.currentPanelWidth) {
+                this.currentPanelWidth = this.defaultPanelWidth;
+                console.warn('Panel width not set, using default:', this.defaultPanelWidth);
+            }
+            
+            // Apply width and positioning
+            panel.style.width = this.currentPanelWidth + 'px';
+            panel.style.right = `-${this.currentPanelWidth}px`;
+            
+            // Force a reflow to ensure styles are applied
+            panel.offsetHeight;
+            
+            // Then open the panel
             panel.classList.add('open');
-            document.body.style.marginRight = '400px';
+            document.body.style.marginRight = this.currentPanelWidth + 'px';
+            console.log('Panel opened with width:', this.currentPanelWidth);
         } else {
             panel.classList.remove('open');
             document.body.style.marginRight = '0';
+            console.log('Panel closed');
         }
+    }
+
+    loadPanelWidth() {
+        try {
+            const savedWidth = localStorage.getItem(this.panelWidthStorageKey);
+            this.currentPanelWidth = savedWidth ? parseInt(savedWidth) : this.defaultPanelWidth;
+            
+            // Ensure width is within bounds
+            this.currentPanelWidth = Math.max(this.minPanelWidth, 
+                Math.min(this.currentPanelWidth, this.maxPanelWidth));
+            
+            console.log('Loaded panel width:', this.currentPanelWidth);
+            
+            // Apply the width to the panel if it exists
+            this.applyPanelWidth();
+        } catch (error) {
+            console.warn('Failed to load panel width from storage:', error);
+            this.currentPanelWidth = this.defaultPanelWidth;
+        }
+    }
+
+    applyPanelWidth() {
+        const panel = document.getElementById('sequencePanel');
+        if (panel && this.currentPanelWidth) {
+            panel.style.width = this.currentPanelWidth + 'px';
+            panel.style.right = `-${this.currentPanelWidth}px`;
+            console.log('Applied panel width:', this.currentPanelWidth);
+        } else {
+            console.warn('Cannot apply panel width - panel element not found or width not set');
+        }
+    }
+
+    savePanelWidth() {
+        try {
+            localStorage.setItem(this.panelWidthStorageKey, this.currentPanelWidth.toString());
+        } catch (error) {
+            console.warn('Failed to save panel width to storage:', error);
+        }
+    }
+
+    setupPanelResize() {
+        const panel = document.getElementById('sequencePanel');
+        if (!panel) {
+            console.error('Cannot setup panel resize - panel element not found');
+            return;
+        }
+        
+        const resizeHandle = panel.querySelector('.resize-handle');
+        if (!resizeHandle) {
+            console.error('Cannot setup panel resize - resize handle not found');
+            return;
+        }
+        
+        // Ensure panel width is applied
+        this.applyPanelWidth();
+        
+        let startX, startWidth;
+
+        const startResize = (e) => {
+            this.isResizing = true;
+            startX = e.clientX;
+            startWidth = parseInt(window.getComputedStyle(panel).width, 10);
+            
+            panel.classList.add('resizing');
+            resizeHandle.classList.add('active');
+            document.body.classList.add('resizing');
+            
+            document.addEventListener('mousemove', doResize);
+            document.addEventListener('mouseup', stopResize);
+            e.preventDefault();
+        };
+
+        const doResize = (e) => {
+            if (!this.isResizing) return;
+            
+            // Calculate new width (resize from left edge, so subtract the difference)
+            const newWidth = startWidth - (e.clientX - startX);
+            
+            // Enforce min/max constraints
+            const constrainedWidth = Math.max(this.minPanelWidth, 
+                Math.min(newWidth, this.maxPanelWidth));
+            
+            // Apply the new width
+            panel.style.width = constrainedWidth + 'px';
+            panel.style.right = this.sequencePanelOpen ? '0' : `-${constrainedWidth}px`;
+            
+            // Update body margin if panel is open
+            if (this.sequencePanelOpen) {
+                document.body.style.marginRight = constrainedWidth + 'px';
+            }
+            
+            this.currentPanelWidth = constrainedWidth;
+        };
+
+        const stopResize = () => {
+            this.isResizing = false;
+            panel.classList.remove('resizing');
+            resizeHandle.classList.remove('active');
+            document.body.classList.remove('resizing');
+            
+            document.removeEventListener('mousemove', doResize);
+            document.removeEventListener('mouseup', stopResize);
+            
+            // Save the new width to localStorage
+            this.savePanelWidth();
+        };
+
+        resizeHandle.addEventListener('mousedown', startResize);
+        
+        // Update max width on window resize
+        window.addEventListener('resize', () => {
+            this.maxPanelWidth = window.innerWidth * 0.8;
+            if (this.currentPanelWidth > this.maxPanelWidth) {
+                this.currentPanelWidth = this.maxPanelWidth;
+                panel.style.width = this.currentPanelWidth + 'px';
+                if (this.sequencePanelOpen) {
+                    document.body.style.marginRight = this.currentPanelWidth + 'px';
+                }
+                this.savePanelWidth();
+            }
+        });
     }
 
     addToSequence(endpointIndex) {
@@ -1956,6 +2121,9 @@ ${responseHeaders}</div>
                                                     📊 Copy CSV
                                                 </button>
                                             ` : ''}
+                                            <button class="copy-btn" onclick="explorer.showItemInGrid('${item.id}')" style="background: #17a2b8;">
+                                                🏗️ Show in Grid
+                                            </button>
                                         </div>
                                     </div>
                                      <div style="font-family: 'Courier New', monospace; font-size: 11px; margin-top: 5px; background: #f8f9fa; padding: 8px; border-radius: 4px; max-height: 200px; overflow-y: auto;">
@@ -3636,9 +3804,358 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
             this.showSequenceMessage('🎯 Sample sequence loaded! Step 2 will use workspace GID from step 1. Variable mappings are automatically configured.', 'success');
         }, 50);
     }
+
+    // Grid View Methods
+    showGridView() {
+        const gridData = this.prepareGridData();
+        if (gridData.length === 0) {
+            alert('No sequence results available. Execute some endpoints first.');
+            return;
+        }
+
+        // Show modal dialog
+        const gridDialog = document.getElementById('gridDialog');
+        const dialogTitle = document.getElementById('gridDialogTitle');
+        
+        dialogTitle.textContent = '📊 Grid View - All Sequence Results';
+        gridDialog.style.display = 'flex';
+        
+        // Prevent body scrolling when modal is open
+        document.body.style.overflow = 'hidden';
+
+        // Check if Ignite UI grid is available, otherwise use fallback
+        setTimeout(() => {
+            const grid = document.getElementById('sequenceResultsGrid');
+            if (grid && typeof grid.data !== 'undefined') {
+                this.populateGrid(gridData);
+            } else {
+                console.warn('Ignite UI Grid not available, using fallback table');
+                this.createFallbackTable(gridData);
+            }
+        }, 100);
+    }
+
+    closeGridDialog() {
+        const gridDialog = document.getElementById('gridDialog');
+        const modalContent = gridDialog.querySelector('.modal-content');
+        
+        // Restore body scrolling
+        document.body.style.overflow = 'auto';
+        
+        // Remove maximized class if present
+        modalContent.classList.remove('maximized');
+        
+        // Hide dialog
+        gridDialog.style.display = 'none';
+    }
+
+    maximizeGrid() {
+        const modalContent = document.querySelector('.modal-content');
+        const maximizeBtn = document.getElementById('maximizeBtn');
+        
+        if (modalContent.classList.contains('maximized')) {
+            modalContent.classList.remove('maximized');
+            maximizeBtn.innerHTML = '⛶ Maximize';
+        } else {
+            modalContent.classList.add('maximized');
+            maximizeBtn.innerHTML = '🗗 Restore';
+        }
+    }
+
+    refreshGridData() {
+        const gridData = this.prepareGridData();
+        if (gridData.length === 0) {
+            alert('No sequence results available.');
+            return;
+        }
+        
+        // Check if we're using Ignite UI grid or fallback table
+        const grid = document.getElementById('sequenceResultsGrid');
+        if (grid && typeof grid.data !== 'undefined') {
+            this.populateGrid(gridData);
+        } else {
+            this.createFallbackTable(gridData);
+        }
+    }
+
+    prepareGridData() {
+        console.log('Preparing grid data from sequence:', this.apiSequence);
+        const gridData = [];
+        
+        this.apiSequence.forEach((item, index) => {
+            console.log(`Processing item ${index}:`, item);
+            
+            if (item.executed && item.result && item.result.data) {
+                const stepData = {
+                    'Step': index + 1,
+                    'Endpoint': `${item.endpoint.method} ${item.endpoint.path}`,
+                    'Status': item.error ? 'Error' : 'Success',
+                    'Records': Array.isArray(item.result.data) ? item.result.data.length : 1
+                };
+
+                // If the result is an array, add each item as a separate row
+                if (Array.isArray(item.result.data)) {
+                    item.result.data.forEach((dataItem, dataIndex) => {
+                        const flattened = this.flattenObject(dataItem, '');
+                        const rowData = {
+                            ...stepData,
+                            'Row': dataIndex + 1,
+                            ...flattened
+                        };
+                        gridData.push(rowData);
+                    });
+                } else {
+                    // Single object result
+                    const flattened = this.flattenObject(item.result.data, '');
+                    const rowData = {
+                        ...stepData,
+                        'Row': 1,
+                        ...flattened
+                    };
+                    gridData.push(rowData);
+                }
+            }
+        });
+
+        console.log('Prepared grid data:', gridData);
+        return gridData;
+    }
+
+    flattenObject(obj, prefix = '', maxDepth = 3, currentDepth = 0) {
+        const flattened = {};
+        
+        if (currentDepth >= maxDepth) {
+            flattened[prefix.slice(0, -1)] = '[Object]';
+            return flattened;
+        }
+
+        for (const key in obj) {
+            if (obj.hasOwnProperty(key)) {
+                const value = obj[key];
+                const newKey = prefix + key;
+                
+                if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+                    Object.assign(flattened, this.flattenObject(value, newKey + '_', maxDepth, currentDepth + 1));
+                } else if (Array.isArray(value)) {
+                    flattened[newKey] = `[Array(${value.length})]`;
+                } else {
+                    flattened[newKey] = value;
+                }
+            }
+        }
+        
+        return flattened;
+    }
+
+    populateGrid(data) {
+        console.log('📊 Populating grid with data:', data);
+        const grid = document.getElementById('sequenceResultsGrid');
+        if (!grid) {
+            console.error('Grid element not found');
+            return;
+        }
+
+        try {
+            // Clear existing columns first
+            if (grid.columns) {
+                grid.columns.clear();
+            }
+
+            // Set auto-generate to false to have more control
+            grid.autoGenerate = false;
+            
+            // Generate columns from data if we have data
+            if (data && data.length > 0) {
+                const firstRow = data[0];
+                const columns = Object.keys(firstRow).map(key => ({
+                    field: key,
+                    header: key,
+                    dataType: typeof firstRow[key] === 'number' ? 'number' : 'string',
+                    sortable: true,
+                    filterable: true,
+                    resizable: true
+                }));
+                
+                console.log('Generated columns:', columns);
+                
+                // Add columns to grid
+                columns.forEach(col => {
+                    const column = document.createElement('igc-column');
+                    column.field = col.field;
+                    column.header = col.header;
+                    column.dataType = col.dataType;
+                    column.sortable = col.sortable;
+                    column.filterable = col.filterable;
+                    column.resizable = col.resizable;
+                    grid.appendChild(column);
+                });
+            }
+
+            // Set the data
+            grid.data = data;
+            
+            // Configure grid features
+            grid.allowFiltering = true;
+            grid.allowSorting = true;
+            grid.allowColumnResizing = true;
+            grid.height = '100%';
+            grid.width = '100%';
+            
+            console.log(`📊 Grid populated successfully with ${data.length} rows`);
+            
+        } catch (error) {
+            console.error('Error populating grid:', error);
+            console.warn('Falling back to HTML table');
+            this.createFallbackTable(data);
+        }
+    }
+
+    createFallbackTable(data) {
+        const gridContainer = document.getElementById('gridContainer');
+        if (!data || data.length === 0) {
+            gridContainer.innerHTML = '<div style="padding: 20px; text-align: center; color: #666;">No data available</div>';
+            return;
+        }
+
+        // Get column names from first row
+        const columns = Object.keys(data[0]);
+        
+        // Create table HTML
+        let tableHTML = `
+            <div style="height: 100%; overflow: auto;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                    <thead style="position: sticky; top: 0; background: #f8f9fa; z-index: 1;">
+                        <tr>
+                            ${columns.map(col => `<th style="border: 1px solid #dee2e6; padding: 8px; text-align: left; font-weight: 600;">${col}</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+        
+        // Add data rows
+        data.forEach((row, index) => {
+            tableHTML += `<tr style="background: ${index % 2 === 0 ? '#fff' : '#f8f9fa'};">`;
+            columns.forEach(col => {
+                let value = row[col];
+                if (value === null || value === undefined) value = '';
+                if (typeof value === 'object') value = JSON.stringify(value);
+                tableHTML += `<td style="border: 1px solid #dee2e6; padding: 6px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${String(value).replace(/"/g, '&quot;')}">${value}</td>`;
+            });
+            tableHTML += '</tr>';
+        });
+        
+        tableHTML += `
+                    </tbody>
+                </table>
+            </div>
+        `;
+        
+        gridContainer.innerHTML = tableHTML;
+        console.log(`📊 Fallback table created with ${data.length} rows`);
+    }
+
+    showItemInGrid(itemId) {
+        const item = this.apiSequence.find(item => item.id === itemId);
+        if (!item || !item.result || !item.result.data) {
+            alert('No data available for this item.');
+            return;
+        }
+
+        // Prepare data for single item
+        const gridData = [];
+        const stepIndex = this.apiSequence.indexOf(item);
+        
+        if (Array.isArray(item.result.data)) {
+            item.result.data.forEach((dataItem, dataIndex) => {
+                const rowData = {
+                    'Step': stepIndex + 1,
+                    'Endpoint': `${item.endpoint.method} ${item.endpoint.path}`,
+                    'Row': dataIndex + 1,
+                    ...this.flattenObject(dataItem)
+                };
+                gridData.push(rowData);
+            });
+        } else {
+            const rowData = {
+                'Step': stepIndex + 1,
+                'Endpoint': `${item.endpoint.method} ${item.endpoint.path}`,
+                'Row': 1,
+                ...this.flattenObject(item.result.data)
+            };
+            gridData.push(rowData);
+        }
+
+        // Show modal dialog
+        const gridDialog = document.getElementById('gridDialog');
+        const dialogTitle = document.getElementById('gridDialogTitle');
+        
+        // Update dialog title to show which step is displayed
+        dialogTitle.innerHTML = `📊 Step ${stepIndex + 1}: ${item.endpoint.method} ${item.endpoint.path}`;
+        gridDialog.style.display = 'flex';
+        
+        // Prevent body scrolling when modal is open
+        document.body.style.overflow = 'hidden';
+
+        // Check if Ignite UI grid is available, otherwise use fallback
+        setTimeout(() => {
+            const grid = document.getElementById('sequenceResultsGrid');
+            if (grid && typeof grid.data !== 'undefined') {
+                this.populateGrid(gridData);
+            } else {
+                console.warn('Ignite UI Grid not available, using fallback table');
+                this.createFallbackTable(gridData);
+            }
+        }, 100);
+    }
 }
 
 // Initialize the application when the DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
+    console.log('🔧 Initializing application...');
+    
+    // Initialize Ignite UI components
+    if (typeof defineCustomElements === 'function') {
+        console.log('✅ Ignite UI defineCustomElements found, initializing...');
+        defineCustomElements();
+    } else {
+        console.warn('⚠️ Ignite UI defineCustomElements not found. Grid will use fallback table.');
+    }
+    
+    // Check if grid component is available
+    setTimeout(() => {
+        const grid = document.getElementById('sequenceResultsGrid');
+        if (grid) {
+            console.log('✅ Grid element found:', grid);
+            console.log('Grid properties:', {
+                data: typeof grid.data,
+                columns: typeof grid.columns,
+                autoGenerate: grid.autoGenerate
+            });
+        } else {
+            console.error('❌ Grid element not found');
+        }
+    }, 1000);
+    
     window.explorer = new AsanaAPIExplorer();
+    
+    // Add keyboard and click outside handlers for grid dialog
+    setupGridDialogHandlers();
 });
+
+function setupGridDialogHandlers() {
+    const gridDialog = document.getElementById('gridDialog');
+    
+    // Close dialog on Escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && gridDialog.style.display === 'flex') {
+            window.explorer.closeGridDialog();
+        }
+    });
+    
+    // Close dialog on click outside modal content
+    gridDialog.addEventListener('click', (e) => {
+        if (e.target === gridDialog) {
+            window.explorer.closeGridDialog();
+        }
+    });
+}

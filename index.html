@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Asana API Endpoints Explorer</title>
+    
+    <!-- Infragistics Ignite UI for Web Components -->
+    <script src="https://cdn.jsdelivr.net/npm/igniteui-webcomponents@latest/dist/igniteui-webcomponents.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/igniteui-webcomponents@latest/dist/igniteui-webcomponents.css">
     <style>
         * {
             margin: 0;
@@ -318,19 +322,55 @@
 
         .sequence-panel {
             position: fixed;
-            right: -400px;
             top: 0;
-            width: 400px;
             height: 100vh;
             background: white;
             box-shadow: -2px 0 10px rgba(0,0,0,0.1);
             transition: right 0.3s ease;
             z-index: 1000;
             overflow-y: auto;
+            min-width: 300px;
+            max-width: 80vw;
+            /* Default values - will be overridden by JavaScript */
+            width: 400px;
+            right: -400px;
         }
 
         .sequence-panel.open {
-            right: 0;
+            right: 0 !important;
+        }
+
+        .sequence-panel.resizing {
+            transition: none !important;
+        }
+
+        .resize-handle {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 5px;
+            height: 100%;
+            background: transparent;
+            cursor: ew-resize;
+            z-index: 1001;
+            transition: background-color 0.2s ease;
+        }
+
+        .resize-handle:hover {
+            background: #667eea;
+        }
+
+        .resize-handle.active {
+            background: #667eea;
+        }
+
+        body.resizing {
+            cursor: ew-resize !important;
+            user-select: none;
+        }
+
+        .sequence-panel.resizing * {
+            pointer-events: none;
         }
 
         .sequence-header {
@@ -586,6 +626,148 @@
 
         .copy-btn.copied {
             background: #28a745;
+        }
+
+        /* Modal Dialog Styles */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            width: 90%;
+            max-width: 1200px;
+            height: 80%;
+            max-height: 800px;
+            display: flex;
+            flex-direction: column;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        .modal-content.maximized {
+            width: 95%;
+            height: 95%;
+            max-width: none;
+            max-height: none;
+        }
+
+        @keyframes slideIn {
+            from { 
+                opacity: 0;
+                transform: translateY(-50px) scale(0.95);
+            }
+            to { 
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid #dee2e6;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border-radius: 12px 12px 0 0;
+        }
+
+        .modal-header h3 {
+            margin: 0;
+            color: #333;
+            font-size: 1.25rem;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .modal-btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .modal-btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .modal-btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .modal-btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .modal-btn-danger:hover {
+            background: #c82333;
+        }
+
+        .modal-body {
+            flex: 1;
+            padding: 1.5rem;
+            overflow: hidden;
+        }
+
+        #gridContainer {
+            background: white;
+            border-radius: 4px;
+            height: 100%;
+        }
+
+        igc-grid {
+            --igc-grid-header-background: #f8f9fa;
+            --igc-grid-header-text-color: #495057;
+            --igc-grid-cell-border-color: #dee2e6;
+            --igc-grid-row-hover-background: #f8f9fa;
+            --igc-grid-row-selected-background: #e3f2fd;
+        }
+
+        /* Responsive modal */
+        @media (max-width: 768px) {
+            .modal-content {
+                width: 95%;
+                height: 90%;
+                margin: 20px;
+            }
+            
+            .modal-header {
+                padding: 0.75rem 1rem;
+            }
+            
+            .modal-body {
+                padding: 1rem;
+            }
+            
+            .modal-actions {
+                flex-wrap: wrap;
+                gap: 4px;
+            }
         }
 
         .results-header {
@@ -889,6 +1071,7 @@
 
     <!-- Sequence Panel -->
     <div id="sequencePanel" class="sequence-panel">
+        <div class="resize-handle"></div>
         <div class="sequence-header">
             <h3 style="margin: 0;">API Call Sequence</h3>
             <button onclick="explorer.toggleSequencePanel()" style="background: none; border: none; color: white; float: right; cursor: pointer; font-size: 18px;">&times;</button>
@@ -913,6 +1096,9 @@
                 <button class="sequence-btn sequence-btn-secondary" onclick="explorer.copyAllResults()" style="font-size: 12px;">
                     📋 Copy All
                 </button>
+                <button class="sequence-btn sequence-btn-primary" onclick="explorer.showGridView()" style="font-size: 12px;">
+                    📊 Grid View
+                </button>
                 <button class="sequence-btn sequence-btn-secondary" onclick="explorer.debugExportConversion()" style="font-size: 12px; background: #dc3545;">
                     🐛 Debug
                 </button>
@@ -922,6 +1108,31 @@
                 <div style="text-align: center; color: #6c757d; padding: 2rem;">
                     <p>No endpoints in sequence yet.</p>
                     <p><small>Click the "Add to Sequence" button on any endpoint to start building your API call chain.</small></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Grid Dialog Modal -->
+    <div id="gridDialog" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="gridDialogTitle">📊 Grid View</h3>
+                <div class="modal-actions">
+                    <button class="modal-btn modal-btn-secondary" onclick="explorer.refreshGridData()">
+                        🔄 Refresh
+                    </button>
+                    <button class="modal-btn modal-btn-secondary" onclick="explorer.maximizeGrid()" id="maximizeBtn">
+                        ⛶ Maximize
+                    </button>
+                    <button class="modal-btn modal-btn-danger" onclick="explorer.closeGridDialog()">
+                        ✕ Close
+                    </button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div id="gridContainer" style="height: 500px; border: 1px solid #ddd; border-radius: 4px;">
+                    <igc-grid id="sequenceResultsGrid" height="100%" width="100%"></igc-grid>
                 </div>
             </div>
         </div>
