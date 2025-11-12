@@ -1,0 +1,56 @@
+{
+  "version": "1.0",
+  "name": "Sample API Sequence with Transformations",
+  "description": "Test sequence with field mappings and unified columns",
+  "sequence": [
+    {
+      "method": "GET",
+      "path": "/projects",
+      "summary": "Get multiple projects",
+      "description": "Returns the compact project records for some filtered set of projects.",
+      "tags": ["Projects"],
+      "parameters": {
+        "path": {},
+        "query": {
+          "limit": "10",
+          "workspace": "1234567890123456"
+        },
+        "body": null
+      },
+      "variableMappings": {}
+    }
+  ],
+  "dataTransformations": {
+    "fieldMappings": [
+      {
+        "sourceField": "gid",
+        "targetField": "project_id",
+        "isUnified": false
+      },
+      {
+        "sourceField": "name",
+        "targetField": "project_name", 
+        "isUnified": false
+      },
+      {
+        "sourceField": "archived",
+        "targetField": "is_archived",
+        "isUnified": false
+      }
+    ],
+    "unifiedColumns": [
+      {
+        "name": "project_info",
+        "formatTemplate": "{name} ({gid})",
+        "sourceFields": ["name", "gid"]
+      },
+      {
+        "name": "project_status",
+        "formatTemplate": "Project: {name} - Active: {!archived}",
+        "sourceFields": ["name", "archived"]
+      }
+    ]
+  },
+  "timestamp": "2025-11-12T00:00:00.000Z",
+  "baseUrl": "https://app.asana.com/api/1.0"
+}

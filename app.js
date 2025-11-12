@@ -2146,6 +2146,9 @@ ${responseHeaders}</div>
 
         container.innerHTML = sequenceHTML;
 
+        // Add transform section after sequence items if there's a final result
+        this.renderTransformSection();
+
         // Update execute button status
         this.updateExecuteButtonStatus();
 
@@ -2153,6 +2156,50 @@ ${responseHeaders}</div>
         setTimeout(() => {
             this.restoreParametersToForms();
         }, 50);
+    }
+
+    renderTransformSection() {
+        // Check if we have a final result that can be transformed
+        const lastExecutedItem = [...this.apiSequence].reverse().find(item => 
+            item.executed && item.result && item.result.data
+        );
+
+        const container = document.getElementById('sequenceItems');
+        
+        if (lastExecutedItem) {
+            const stepIndex = this.apiSequence.indexOf(lastExecutedItem);
+            const recordCount = Array.isArray(lastExecutedItem.result.data) 
+                ? lastExecutedItem.result.data.length 
+                : 1;
+
+            // Add transform section HTML
+            const transformSectionHTML = `
+                <div id="transformTrigger" style="margin-top: 1rem; padding: 1rem; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <h4 style="margin: 0; color: #333; font-size: 14px;">
+                                🔄 Transform Final Result
+                            </h4>
+                            <p style="margin: 0.25rem 0 0 0; font-size: 12px; color: #666;">
+                                Step ${stepIndex + 1}: ${lastExecutedItem.endpoint.method} ${lastExecutedItem.endpoint.path} 
+                                (${recordCount} record${recordCount !== 1 ? 's' : ''})
+                            </p>
+                        </div>
+                        <button class="sequence-btn sequence-btn-info" onclick="explorer.showTransformation()" style="font-size: 12px; background: #17a2b8;">
+                            🔄 Transform Data
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            container.insertAdjacentHTML('beforeend', transformSectionHTML);
+        } else {
+            // Remove transform section if no final result
+            const existingSection = document.getElementById('transformTrigger');
+            if (existingSection) {
+                existingSection.remove();
+            }
+        }
     }
 
     updateExecuteButtonStatus() {
@@ -3374,6 +3421,32 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
         } else {
             console.log(`⚠️ Sequence completed with ${completedItems.length}/${this.apiSequence.length} successful steps`);
         }
+        
+        // Auto-refresh field mapping options if there are imported field mappings and transformation panel is visible
+        const transformSection = document.getElementById('dataTransformation');
+        const hasFieldMappings = this.dataTransformations.fieldMappings.length > 0;
+        const transformationVisible = transformSection && transformSection.style.display !== 'none';
+        
+        if (hasFieldMappings && transformationVisible && completedItems.length > 0) {
+            console.log('🔄 Auto-refreshing field mapping options after sequence execution');
+            setTimeout(() => {
+                this.renderFieldMappings();
+                
+                // Show a subtle notification that field options were updated
+                const headerElement = transformSection.querySelector('.transformation-header h4');
+                if (headerElement) {
+                    const originalText = headerElement.innerHTML;
+                    headerElement.innerHTML = `🔄 Data Transformation - Field Options Updated`;
+                    headerElement.style.color = '#28a745';
+                    
+                    // Restore original text after 2 seconds
+                    setTimeout(() => {
+                        headerElement.innerHTML = originalText;
+                        headerElement.style.color = '';
+                    }, 2000);
+                }
+            }, 200);
+        }
     }
 
     async executeSequenceItem(itemId) {
@@ -3503,6 +3576,18 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
     clearSequence() {
         this.apiSequence = [];
         this.sequenceResults.clear();
+        
+        // Hide transformation panel since there's no more data to transform
+        const transformSection = document.getElementById('dataTransformation');
+        if (transformSection) {
+            transformSection.style.display = 'none';
+        }
+        
+        // Clear transformation data
+        this.dataTransformations.fieldMappings = [];
+        this.dataTransformations.unifiedColumns = [];
+        this.transformedData = null;
+        
         this.renderSequence();
     }
 
@@ -3672,9 +3757,22 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
             // Show results
             if (loadedCount > 0) {
                 this.renderSequence();
-                const message = skippedCount > 0 
+                
+                // Check if transformation settings were also imported
+                const hasImportedTransformations = importData.dataTransformations && 
+                    (importData.dataTransformations.fieldMappings?.length > 0 || 
+                     importData.dataTransformations.unifiedColumns?.length > 0);
+                
+                let message = skippedCount > 0 
                     ? `✅ Loaded ${loadedCount} endpoints (${skippedCount} skipped due to errors)`
                     : `✅ Successfully loaded ${loadedCount} endpoints`;
+                    
+                if (hasImportedTransformations) {
+                    const transformationCount = (importData.dataTransformations.fieldMappings?.length || 0) +
+                                              (importData.dataTransformations.unifiedColumns?.length || 0);
+                    message += ` and ${transformationCount} transformation setting${transformationCount !== 1 ? 's' : ''}`;
+                }
+                
                 this.showSequenceMessage(message, 'success');
 
                 // Auto-open sequence panel
@@ -3704,6 +3802,33 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
                     this.dataTransformations.fieldMappings = importData.dataTransformations.fieldMappings || [];
                     this.dataTransformations.unifiedColumns = importData.dataTransformations.unifiedColumns || [];
                     console.log('Loaded transformation settings:', this.dataTransformations);
+                    
+                    // Auto-show transformation panel if we have settings
+                    const hasTransformations = this.dataTransformations.fieldMappings.length > 0 || 
+                                             this.dataTransformations.unifiedColumns.length > 0;
+                    
+                    if (hasTransformations) {
+                        console.log('Auto-showing transformation panel with imported settings');
+                        setTimeout(() => {
+                            // Show the panel and ensure field mappings are rendered
+                            const transformSection = document.getElementById('dataTransformation');
+                            if (transformSection) {
+                                transformSection.style.display = 'block';
+                                
+                                // Render the imported field mappings
+                                this.renderFieldMappings();
+                                
+                                // Update header appropriately
+                                const headerElement = transformSection.querySelector('.transformation-header h4');
+                                if (headerElement) {
+                                    headerElement.innerHTML = `🔄 Data Transformation - Imported Settings`;
+                                }
+                                
+                                // Scroll to transformation section
+                                transformSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                            }
+                        }, 800); // Increased delay to ensure DOM is fully ready
+                    }
                 }
 
                 // Restore parameter values to form fields after a short delay
@@ -4138,9 +4263,15 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
             return;
         }
 
-        // Auto-populate field mappings from the final result
-        this.autoPopulateFieldMappings();
+        // Auto-populate field mappings from the final result only if no existing mappings
+        if (this.dataTransformations.fieldMappings.length === 0 && this.dataTransformations.unifiedColumns.length === 0) {
+            this.autoPopulateFieldMappings();
+        }
         
+        this.showTransformationPanel();
+    }
+
+    showTransformationPanel() {
         // Show transformation panel
         const transformSection = document.getElementById('dataTransformation');
         transformSection.style.display = 'block';
@@ -4151,10 +4282,16 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
         this.renderFieldMappings();
         
         // Update transformation header to show which step is being transformed
-        const stepIndex = this.apiSequence.indexOf(lastExecutedItem);
-        const headerElement = transformSection.querySelector('.transformation-header h4');
-        if (headerElement) {
-            headerElement.innerHTML = `🔄 Data Transformation - Step ${stepIndex + 1} (Final Result)`;
+        const lastExecutedItem = [...this.apiSequence].reverse().find(item => 
+            item.executed && item.result && item.result.data
+        );
+        
+        if (lastExecutedItem) {
+            const stepIndex = this.apiSequence.indexOf(lastExecutedItem);
+            const headerElement = transformSection.querySelector('.transformation-header h4');
+            if (headerElement) {
+                headerElement.innerHTML = `🔄 Data Transformation - Step ${stepIndex + 1} (Final Result)`;
+            }
         }
     }
 
@@ -4226,22 +4363,42 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
         
         let html = '';
 
-        // Show available fields info
+        // Show available fields info or execution status
         if (availableFields.length > 0) {
             html += `
                 <div style="font-size: 11px; color: #666; margin-bottom: 0.5rem; padding: 0.25rem; background: #f8f9fa; border-radius: 3px;">
                     Available fields: ${availableFields.slice(0, 8).join(', ')}${availableFields.length > 8 ? '...' : ''}
                 </div>
             `;
+        } else if (this.dataTransformations.fieldMappings.length > 0) {
+            html += `
+                <div style="font-size: 11px; color: #ffc107; margin-bottom: 0.5rem; padding: 0.25rem; background: #fff3cd; border-radius: 3px; border-left: 3px solid #ffc107;">
+                    ⚠️ Execute the sequence to populate field options in the dropdowns
+                </div>
+            `;
         }
 
         // Render regular field mappings
         this.dataTransformations.fieldMappings.forEach((mapping, index) => {
+            // Create a combined list of available fields and the current mapping's sourceField (if not already included)
+            const allFields = [...availableFields];
+            if (mapping.sourceField && !availableFields.includes(mapping.sourceField)) {
+                allFields.unshift(mapping.sourceField); // Add at beginning
+            }
+            
+            // Generate field options with proper selection
+            const fieldOptionsWithSelection = allFields.map(field => {
+                const selected = field === mapping.sourceField ? 'selected' : '';
+                const isImported = !availableFields.includes(field) && field === mapping.sourceField;
+                const label = isImported ? `${field} (imported)` : field;
+                return `<option value="${field}" ${selected}>${label}</option>`;
+            }).join('');
+            
             html += `
                 <div class="field-mapping-item">
                     <select onchange="explorer.updateFieldMapping(${index}, 'sourceField', this.value)">
                         <option value="">Select Source Field</option>
-                        ${fieldOptions}
+                        ${fieldOptionsWithSelection}
                     </select>
                     <span style="color: #666;">→</span>
                     <input type="text" placeholder="Target Field" value="${mapping.targetField}" 
@@ -4272,14 +4429,6 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
         }
 
         container.innerHTML = html;
-        
-        // Set selected values for dropdowns
-        this.dataTransformations.fieldMappings.forEach((mapping, index) => {
-            const select = container.children[availableFields.length > 0 ? index + 1 : index]?.querySelector('select');
-            if (select && mapping.sourceField) {
-                select.value = mapping.sourceField;
-            }
-        });
     }
 
     updateFieldMapping(index, field, value) {
