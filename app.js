@@ -22,6 +22,13 @@ class AsanaAPIExplorer {
         this.maxPanelWidth = window.innerWidth * 0.8;
         this.currentPanelWidth = this.defaultPanelWidth;
         this.isResizing = false;
+
+        // Data transformation management
+        this.dataTransformations = {
+            fieldMappings: [], // [{ sourceField: '', targetField: '', isUnified: false }]
+            unifiedColumns: [] // [{ name: '', formatTemplate: '', sourceFields: [] }]
+        };
+        this.transformedData = null;
         
         this.loadPATFromStorage();
         this.loadPanelWidth();
@@ -3518,6 +3525,10 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
                 parameters: this.convertParametersForExport(item.parameters, index),
                 variableMappings: this.convertVariableMappingsForExport(item.variableMappings, index)
             })),
+            dataTransformations: {
+                fieldMappings: [...this.dataTransformations.fieldMappings],
+                unifiedColumns: [...this.dataTransformations.unifiedColumns]
+            },
             timestamp: new Date().toISOString(),
             baseUrl: this.baseUrl
         };
@@ -3686,6 +3697,13 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
                     setTimeout(() => {
                         alert('This sequence has variable mappings configured. Set your Personal Access Token to execute the full sequence.');
                     }, 1000);
+                }
+
+                // Load transformation settings if available
+                if (importData.dataTransformations) {
+                    this.dataTransformations.fieldMappings = importData.dataTransformations.fieldMappings || [];
+                    this.dataTransformations.unifiedColumns = importData.dataTransformations.unifiedColumns || [];
+                    console.log('Loaded transformation settings:', this.dataTransformations);
                 }
 
                 // Restore parameter values to form fields after a short delay
@@ -4106,6 +4124,313 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
                 this.createFallbackTable(gridData);
             }
         }, 100);
+    }
+
+    // Data Transformation Methods
+    showTransformation() {
+        // Check if we have sequence results
+        const lastExecutedItem = [...this.apiSequence].reverse().find(item => 
+            item.executed && item.result && item.result.data
+        );
+        
+        if (!lastExecutedItem) {
+            alert('Execute the sequence first to enable data transformation. Transformations are applied to the final result only.');
+            return;
+        }
+
+        // Auto-populate field mappings from the final result
+        this.autoPopulateFieldMappings();
+        
+        // Show transformation panel
+        const transformSection = document.getElementById('dataTransformation');
+        transformSection.style.display = 'block';
+        
+        // Scroll to transformation section
+        transformSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        
+        this.renderFieldMappings();
+        
+        // Update transformation header to show which step is being transformed
+        const stepIndex = this.apiSequence.indexOf(lastExecutedItem);
+        const headerElement = transformSection.querySelector('.transformation-header h4');
+        if (headerElement) {
+            headerElement.innerHTML = `🔄 Data Transformation - Step ${stepIndex + 1} (Final Result)`;
+        }
+    }
+
+    toggleTransformation() {
+        const transformSection = document.getElementById('dataTransformation');
+        transformSection.style.display = 'none';
+    }
+
+    autoPopulateFieldMappings() {
+        // Get the last executed item with results (final sequence result)
+        const lastItem = [...this.apiSequence].reverse().find(item => 
+            item.executed && item.result && item.result.data
+        );
+        
+        if (!lastItem) return;
+
+        // Clear existing mappings
+        this.dataTransformations.fieldMappings = [];
+        
+        // Get sample data from final result to extract field names
+        let sampleData = lastItem.result.data;
+        if (Array.isArray(sampleData) && sampleData.length > 0) {
+            sampleData = sampleData[0];
+        }
+        
+        // Create field mappings from the final result's sample data
+        const flattenedFields = this.flattenObject(sampleData);
+        Object.keys(flattenedFields).forEach(field => {
+            this.dataTransformations.fieldMappings.push({
+                sourceField: field,
+                targetField: field, // Default to same name
+                isUnified: false
+            });
+        });
+    }
+
+    addFieldMapping() {
+        this.dataTransformations.fieldMappings.push({
+            sourceField: '',
+            targetField: '',
+            isUnified: false
+        });
+        this.renderFieldMappings();
+    }
+
+    addUnifiedColumn() {
+        this.dataTransformations.unifiedColumns.push({
+            name: 'unified_field',
+            formatTemplate: '{field1} - {field2}',
+            sourceFields: []
+        });
+        this.renderFieldMappings();
+    }
+
+    removeFieldMapping(index) {
+        this.dataTransformations.fieldMappings.splice(index, 1);
+        this.renderFieldMappings();
+    }
+
+    removeUnifiedColumn(index) {
+        this.dataTransformations.unifiedColumns.splice(index, 1);
+        this.renderFieldMappings();
+    }
+
+    renderFieldMappings() {
+        const container = document.getElementById('fieldMappings');
+        const availableFields = this.getAvailableFields();
+        const fieldOptions = availableFields.map(field => `<option value="${field}">${field}</option>`).join('');
+        
+        let html = '';
+
+        // Show available fields info
+        if (availableFields.length > 0) {
+            html += `
+                <div style="font-size: 11px; color: #666; margin-bottom: 0.5rem; padding: 0.25rem; background: #f8f9fa; border-radius: 3px;">
+                    Available fields: ${availableFields.slice(0, 8).join(', ')}${availableFields.length > 8 ? '...' : ''}
+                </div>
+            `;
+        }
+
+        // Render regular field mappings
+        this.dataTransformations.fieldMappings.forEach((mapping, index) => {
+            html += `
+                <div class="field-mapping-item">
+                    <select onchange="explorer.updateFieldMapping(${index}, 'sourceField', this.value)">
+                        <option value="">Select Source Field</option>
+                        ${fieldOptions}
+                    </select>
+                    <span style="color: #666;">→</span>
+                    <input type="text" placeholder="Target Field" value="${mapping.targetField}" 
+                           onchange="explorer.updateFieldMapping(${index}, 'targetField', this.value)">
+                    <button class="remove-mapping-btn" onclick="explorer.removeFieldMapping(${index})" title="Remove">×</button>
+                </div>
+            `;
+        });
+
+        // Render unified columns
+        this.dataTransformations.unifiedColumns.forEach((unified, index) => {
+            html += `
+                <div class="field-mapping-item unified-column">
+                    <input type="text" placeholder="Column Name" value="${unified.name}" 
+                           onchange="explorer.updateUnifiedColumn(${index}, 'name', this.value)">
+                    <span style="color: #007bff;">🔗</span>
+                    <input type="text" class="format-template" placeholder="Format: {field1} - {field2}" 
+                           value="${unified.formatTemplate}" 
+                           onchange="explorer.updateUnifiedColumn(${index}, 'formatTemplate', this.value)"
+                           title="Use {fieldName} to reference fields. Available: ${availableFields.join(', ')}">
+                    <button class="remove-mapping-btn" onclick="explorer.removeUnifiedColumn(${index})" title="Remove">×</button>
+                </div>
+            `;
+        });
+
+        if (this.dataTransformations.fieldMappings.length === 0 && this.dataTransformations.unifiedColumns.length === 0) {
+            html += '<div style="text-align: center; color: #666; padding: 1rem;">No field mappings yet. Click "Add Field Mapping" to start.</div>';
+        }
+
+        container.innerHTML = html;
+        
+        // Set selected values for dropdowns
+        this.dataTransformations.fieldMappings.forEach((mapping, index) => {
+            const select = container.children[availableFields.length > 0 ? index + 1 : index]?.querySelector('select');
+            if (select && mapping.sourceField) {
+                select.value = mapping.sourceField;
+            }
+        });
+    }
+
+    updateFieldMapping(index, field, value) {
+        if (this.dataTransformations.fieldMappings[index]) {
+            this.dataTransformations.fieldMappings[index][field] = value;
+        }
+    }
+
+    updateUnifiedColumn(index, field, value) {
+        if (this.dataTransformations.unifiedColumns[index]) {
+            this.dataTransformations.unifiedColumns[index][field] = value;
+        }
+    }
+
+    previewTransformation() {
+        try {
+            const transformedData = this.applyTransformation();
+            if (transformedData.length === 0) {
+                alert('No final sequence data to transform. Execute the sequence first.');
+                return;
+            }
+
+            // Show preview in console
+            console.log('🔄 Transformed Final Result Preview:', transformedData.slice(0, 5));
+            alert(`Final result transformation preview generated! Check console for ${transformedData.length} transformed records from the last step. First 5 records are shown.`);
+        } catch (error) {
+            console.error('Transformation error:', error);
+            alert('Transformation failed: ' + error.message);
+        }
+    }
+
+    applyAndShowGrid() {
+        try {
+            const transformedData = this.applyTransformation();
+            if (transformedData.length === 0) {
+                alert('No final sequence data to transform. Execute the sequence first.');
+                return;
+            }
+
+            // Show in grid modal
+            const gridDialog = document.getElementById('gridDialog');
+            const dialogTitle = document.getElementById('gridDialogTitle');
+            
+            dialogTitle.innerHTML = '📊 Transformed Final Result';
+            gridDialog.style.display = 'flex';
+            
+            // Prevent body scrolling when modal is open
+            document.body.style.overflow = 'hidden';
+
+            // Populate grid with transformed data
+            setTimeout(() => {
+                const grid = document.getElementById('sequenceResultsGrid');
+                if (grid && typeof grid.data !== 'undefined') {
+                    this.populateGrid(transformedData);
+                } else {
+                    this.createFallbackTable(transformedData);
+                }
+            }, 100);
+
+        } catch (error) {
+            console.error('Transformation error:', error);
+            alert('Transformation failed: ' + error.message);
+        }
+    }
+
+    applyTransformation() {
+        // Get the last executed item with results (final result of sequence)
+        const lastExecutedItem = [...this.apiSequence].reverse().find(item => 
+            item.executed && item.result && item.result.data
+        );
+
+        if (!lastExecutedItem) {
+            return [];
+        }
+
+        // Get data from the final step only
+        let finalData = lastExecutedItem.result.data;
+        
+        // Ensure it's an array
+        if (!Array.isArray(finalData)) {
+            finalData = [finalData];
+        }
+
+        // Prepare the data with metadata
+        const allData = finalData.map((record, recordIndex) => {
+            const flatRecord = this.flattenObject(record);
+            const stepIndex = this.apiSequence.indexOf(lastExecutedItem);
+            flatRecord._step = stepIndex + 1;
+            flatRecord._record = recordIndex + 1;
+            flatRecord._endpoint = `${lastExecutedItem.endpoint.method} ${lastExecutedItem.endpoint.path}`;
+            return flatRecord;
+        });
+
+        if (allData.length === 0) {
+            return [];
+        }
+
+        // Apply field mappings
+        const transformedData = allData.map(record => {
+            const transformed = {};
+            
+            // Apply regular field mappings
+            this.dataTransformations.fieldMappings.forEach(mapping => {
+                if (mapping.sourceField && mapping.targetField) {
+                    transformed[mapping.targetField] = record[mapping.sourceField] || '';
+                }
+            });
+            
+            // Apply unified columns
+            this.dataTransformations.unifiedColumns.forEach(unified => {
+                if (unified.name && unified.formatTemplate) {
+                    let formattedValue = unified.formatTemplate;
+                    
+                    // Replace {fieldName} placeholders with actual values
+                    const matches = formattedValue.match(/\{([^}]+)\}/g);
+                    if (matches) {
+                        matches.forEach(match => {
+                            const fieldName = match.slice(1, -1);
+                            const fieldValue = record[fieldName] || '';
+                            formattedValue = formattedValue.replace(match, fieldValue);
+                        });
+                    }
+                    
+                    transformed[unified.name] = formattedValue;
+                }
+            });
+            
+            return transformed;
+        });
+
+        this.transformedData = transformedData;
+        return transformedData;
+    }
+
+    getAvailableFields() {
+        // Get fields only from the final sequence result
+        const lastExecutedItem = [...this.apiSequence].reverse().find(item => 
+            item.executed && item.result && item.result.data
+        );
+
+        if (!lastExecutedItem) {
+            return [];
+        }
+
+        let sampleData = lastExecutedItem.result.data;
+        if (Array.isArray(sampleData) && sampleData.length > 0) {
+            sampleData = sampleData[0];
+        }
+        
+        const flattenedFields = this.flattenObject(sampleData);
+        return Object.keys(flattenedFields).sort();
     }
 }
 

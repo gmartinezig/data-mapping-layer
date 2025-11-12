@@ -373,6 +373,115 @@
             pointer-events: none;
         }
 
+        /* Data Transformation Styles */
+        .data-transformation {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+
+        .transformation-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        .field-mapping {
+            margin-bottom: 1rem;
+        }
+
+        .field-mapping-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+            padding: 0.5rem;
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+        }
+
+        .field-mapping-item input, .field-mapping-item select {
+            flex: 1;
+            min-width: 0;
+            padding: 0.25rem 0.5rem;
+            border: 1px solid #ced4da;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        .unified-column {
+            background: #e3f2fd;
+            border-color: #2196f3;
+        }
+
+        .unified-column input {
+            background: #f0f8ff;
+        }
+
+        .remove-mapping-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            width: 24px;
+            height: 24px;
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .remove-mapping-btn:hover {
+            background: #c82333;
+        }
+
+        .add-mapping-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 0.5rem 1rem;
+            font-size: 12px;
+            cursor: pointer;
+            margin-right: 0.5rem;
+        }
+
+        .add-mapping-btn:hover {
+            background: #218838;
+        }
+
+        .format-template {
+            font-family: 'Courier New', monospace;
+            background: #f8f9fa;
+            border: 1px solid #ced4da;
+            border-radius: 3px;
+            padding: 0.5rem;
+            width: 100%;
+            margin-top: 0.5rem;
+            font-size: 12px;
+        }
+
+        .preview-btn {
+            background: #17a2b8;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 0.5rem 1rem;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .preview-btn:hover {
+            background: #138496;
+        }
+
         .sequence-header {
             padding: 20px;
             background: #667eea;
@@ -1099,6 +1208,9 @@
                 <button class="sequence-btn sequence-btn-primary" onclick="explorer.showGridView()" style="font-size: 12px;">
                     📊 Grid View
                 </button>
+                <button class="sequence-btn sequence-btn-info" onclick="explorer.showTransformation()" style="font-size: 12px; background: #17a2b8;">
+                    🔄 Transform
+                </button>
                 <button class="sequence-btn sequence-btn-secondary" onclick="explorer.debugExportConversion()" style="font-size: 12px; background: #dc3545;">
                     🐛 Debug
                 </button>
@@ -1108,6 +1220,38 @@
                 <div style="text-align: center; color: #6c757d; padding: 2rem;">
                     <p>No endpoints in sequence yet.</p>
                     <p><small>Click the "Add to Sequence" button on any endpoint to start building your API call chain.</small></p>
+                </div>
+            </div>
+            
+            <!-- Data Transformation Section -->
+            <div id="dataTransformation" class="data-transformation" style="display: none;">
+                <div class="transformation-header">
+                    <h4 style="margin: 0; color: #333;">🔄 Data Transformation</h4>
+                    <button onclick="explorer.toggleTransformation()" style="background: none; border: none; color: #666; cursor: pointer; font-size: 14px;">✕</button>
+                </div>
+                
+                <div class="field-mapping">
+                    <h5 style="margin: 0 0 0.5rem 0; font-size: 13px;">Field Mappings</h5>
+                    <div id="fieldMappings">
+                        <!-- Dynamic field mappings will be inserted here -->
+                    </div>
+                    <div style="margin-top: 0.5rem;">
+                        <button class="add-mapping-btn" onclick="explorer.addFieldMapping()">
+                            + Add Field Mapping
+                        </button>
+                        <button class="add-mapping-btn" onclick="explorer.addUnifiedColumn()" style="background: #007bff;">
+                            + Add Unified Column
+                        </button>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 1rem; text-align: center;">
+                    <button class="preview-btn" onclick="explorer.previewTransformation()">
+                        🔍 Preview Transformation
+                    </button>
+                    <button class="preview-btn" onclick="explorer.applyAndShowGrid()" style="background: #28a745; margin-left: 0.5rem;">
+                        📊 Apply & Show Grid
+                    </button>
                 </div>
             </div>
         </div>
