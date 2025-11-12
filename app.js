@@ -28,30 +28,43 @@ class AsanaAPIExplorer {
     async loadAsanaAPISpec() {
         try {
             // Load the Asana OpenAPI specification
-            const response = await fetch('https://raw.githubusercontent.com/pmoleri/openapi/refs/heads/patch-1/defs/asana_oas.yaml');
+            const response = await fetch('https://raw.githubusercontent.com/Asana/openapi/master/defs/asana_oas.yaml');
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
             const yamlText = await response.text();
             
             // Parse YAML to extract endpoints
             this.parseYAMLSpec(yamlText);
+            
+            // If we didn't get enough endpoints, add comprehensive sample data
+            if (this.endpoints.length < 50) {
+                console.log(`Only found ${this.endpoints.length} endpoints from parsing, adding comprehensive sample data`);
+                this.createComprehensiveEndpoints();
+            }
         } catch (error) {
-            // Fallback: create sample endpoints from the fetched content
-            this.createSampleEndpoints();
+            console.warn('Failed to load OpenAPI spec:', error);
+            // Fallback: create comprehensive endpoints
+            this.createComprehensiveEndpoints();
         }
     }
 
     parseYAMLSpec(yamlText) {
-        // Simple YAML parser for paths section
+        // Enhanced YAML parser for paths section
         const lines = yamlText.split('\n');
         let inPaths = false;
         let currentPath = '';
         let currentMethod = '';
         let currentEndpoint = null;
-        let indent = 0;
+        let pathIndent = 0;
+        let methodIndent = 0;
         
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
             const trimmed = line.trim();
+            const lineIndent = line.length - line.trimLeft().length;
             
+            // Find the paths section
             if (trimmed === 'paths:') {
                 inPaths = true;
                 continue;
@@ -59,23 +72,34 @@ class AsanaAPIExplorer {
             
             if (!inPaths) continue;
             
-            // Stop if we hit another top-level section
-            if (line.match(/^[a-zA-Z]/)) {
+            // Stop if we hit another top-level section (no indentation)
+            if (lineIndent === 0 && trimmed && !trimmed.startsWith('/')) {
                 inPaths = false;
-                continue;
+                break;
             }
             
-            const lineIndent = line.length - line.trimLeft().length;
-            
-            // Path definition (starts with /)
-            if (trimmed.startsWith('/') && trimmed.endsWith(':')) {
+            // Path definition (starts with / and ends with :)
+            if (trimmed.startsWith('/') && trimmed.endsWith(':') && lineIndent >= 2) {
+                // Save previous endpoint if exists
+                if (currentEndpoint && currentEndpoint.path && currentEndpoint.method) {
+                    this.endpoints.push({ ...currentEndpoint });
+                }
+                
                 currentPath = trimmed.slice(0, -1);
+                pathIndent = lineIndent;
+                currentEndpoint = null;
                 continue;
             }
             
-            // HTTP method
-            if (['get:', 'post:', 'put:', 'patch:', 'delete:', 'head:', 'options:'].includes(trimmed)) {
+            // HTTP method (must be under a path)
+            if (currentPath && ['get:', 'post:', 'put:', 'patch:', 'delete:', 'head:', 'options:'].includes(trimmed) && lineIndent > pathIndent) {
+                // Save previous endpoint if exists
+                if (currentEndpoint && currentEndpoint.path && currentEndpoint.method) {
+                    this.endpoints.push({ ...currentEndpoint });
+                }
+                
                 currentMethod = trimmed.slice(0, -1).toUpperCase();
+                methodIndent = lineIndent;
                 currentEndpoint = {
                     path: currentPath,
                     method: currentMethod,
@@ -88,37 +112,58 @@ class AsanaAPIExplorer {
                 continue;
             }
             
-            // Extract endpoint details
-            if (currentEndpoint && lineIndent > 4) {
+            // Extract endpoint details (must be under a method)
+            if (currentEndpoint && lineIndent > methodIndent) {
                 if (trimmed.startsWith('summary:')) {
-                    currentEndpoint.summary = trimmed.replace('summary:', '').trim();
+                    const summary = trimmed.replace('summary:', '').trim();
+                    if (summary.startsWith('"') && summary.endsWith('"')) {
+                        currentEndpoint.summary = summary.slice(1, -1);
+                    } else if (summary.startsWith("'") && summary.endsWith("'")) {
+                        currentEndpoint.summary = summary.slice(1, -1);
+                    } else {
+                        currentEndpoint.summary = summary;
+                    }
                 } else if (trimmed.startsWith('description:')) {
                     let desc = trimmed.replace('description:', '').trim();
-                    // Handle multi-line descriptions
-                    let j = i + 1;
-                    while (j < lines.length && lines[j].trim() && !lines[j].trim().includes(':')) {
-                        desc += ' ' + lines[j].trim();
-                        j++;
+                    
+                    // Handle quoted descriptions
+                    if (desc.startsWith('"') || desc.startsWith("'")) {
+                        const quote = desc[0];
+                        desc = desc.slice(1);
+                        if (desc.endsWith(quote)) {
+                            desc = desc.slice(0, -1);
+                        }
                     }
+                    
+                    // Handle multi-line descriptions
+                    if (desc === '|-' || desc === '|' || desc === '>-' || desc === '>') {
+                        desc = '';
+                        let j = i + 1;
+                        while (j < lines.length && lines[j] && lines[j].length - lines[j].trimLeft().length > lineIndent) {
+                            const descLine = lines[j].trim();
+                            if (descLine) {
+                                desc += (desc ? ' ' : '') + descLine;
+                            }
+                            j++;
+                        }
+                        i = j - 1; // Skip processed lines
+                    }
+                    
                     currentEndpoint.description = desc;
                 } else if (trimmed.startsWith('operationId:')) {
                     currentEndpoint.operationId = trimmed.replace('operationId:', '').trim();
-                } else if (trimmed.startsWith('tags:')) {
+                } else if (trimmed === 'tags:') {
                     // Handle tags array
                     let j = i + 1;
-                    while (j < lines.length && lines[j].trim().startsWith('- ')) {
-                        currentEndpoint.tags.push(lines[j].trim().substring(2));
+                    while (j < lines.length && lines[j] && lines[j].length - lines[j].trimLeft().length > lineIndent) {
+                        const tagLine = lines[j].trim();
+                        if (tagLine.startsWith('- ')) {
+                            currentEndpoint.tags.push(tagLine.substring(2).trim());
+                        }
                         j++;
                     }
+                    i = j - 1; // Skip processed lines
                 }
-            }
-            
-            // Save completed endpoint
-            if (currentEndpoint && (trimmed.startsWith('/') || ['get:', 'post:', 'put:', 'patch:', 'delete:'].includes(trimmed) || !inPaths)) {
-                if (currentEndpoint.path && currentEndpoint.method) {
-                    this.endpoints.push({ ...currentEndpoint });
-                }
-                currentEndpoint = null;
             }
         }
         
@@ -127,13 +172,10 @@ class AsanaAPIExplorer {
             this.endpoints.push(currentEndpoint);
         }
         
-        // If parsing didn't work well, fall back to sample data
-        if (this.endpoints.length < 10) {
-            this.createSampleEndpoints();
-        }
+        console.log(`Parsed ${this.endpoints.length} endpoints from OpenAPI spec`);
     }
 
-    createSampleEndpoints() {
+    createComprehensiveEndpoints() {
         // Create comprehensive sample endpoints based on the Asana API
         this.endpoints = [
             // Access Requests
@@ -690,8 +732,451 @@ class AsanaAPIExplorer {
                 tags: ['Webhooks'],
                 operationId: 'deleteWebhook',
                 security: ['oauth2']
+            },
+
+            // Additional comprehensive endpoints
+            
+            // Stories
+            {
+                path: '/stories/{story_gid}',
+                method: 'GET',
+                summary: 'Get a story',
+                description: 'Returns the full record for a single story.',
+                tags: ['Stories'],
+                operationId: 'getStory',
+                security: ['oauth2']
+            },
+            {
+                path: '/stories/{story_gid}',
+                method: 'PUT',
+                summary: 'Update a story',
+                description: 'Updates the story and returns the complete updated story record.',
+                tags: ['Stories'],
+                operationId: 'updateStory',
+                security: ['oauth2']
+            },
+            {
+                path: '/stories/{story_gid}',
+                method: 'DELETE',
+                summary: 'Delete a story',
+                description: 'Deletes the story.',
+                tags: ['Stories'],
+                operationId: 'deleteStory',
+                security: ['oauth2']
+            },
+
+            // Sections
+            {
+                path: '/sections',
+                method: 'POST',
+                summary: 'Create a section',
+                description: 'Creates a new section and returns the created section record.',
+                tags: ['Sections'],
+                operationId: 'createSection',
+                security: ['oauth2']
+            },
+            {
+                path: '/sections/{section_gid}',
+                method: 'GET',
+                summary: 'Get a section',
+                description: 'Returns the complete section record for a single section.',
+                tags: ['Sections'],
+                operationId: 'getSection',
+                security: ['oauth2']
+            },
+            {
+                path: '/sections/{section_gid}',
+                method: 'PUT',
+                summary: 'Update a section',
+                description: 'Updates the section and returns the updated section record.',
+                tags: ['Sections'],
+                operationId: 'updateSection',
+                security: ['oauth2']
+            },
+            {
+                path: '/sections/{section_gid}',
+                method: 'DELETE',
+                summary: 'Delete a section',
+                description: 'Deletes the section.',
+                tags: ['Sections'],
+                operationId: 'deleteSection',
+                security: ['oauth2']
+            },
+            {
+                path: '/projects/{project_gid}/sections',
+                method: 'GET',
+                summary: 'Get sections in a project',
+                description: 'Returns the compact records for all sections in the specified project.',
+                tags: ['Sections'],
+                operationId: 'getSectionsForProject',
+                security: ['oauth2']
+            },
+
+            // Task Dependencies
+            {
+                path: '/tasks/{task_gid}/dependencies',
+                method: 'GET',
+                summary: 'Get dependencies from a task',
+                description: 'Returns the dependencies of a task.',
+                tags: ['Tasks', 'Dependencies'],
+                operationId: 'getDependenciesForTask',
+                security: ['oauth2']
+            },
+            {
+                path: '/tasks/{task_gid}/dependents',
+                method: 'GET',
+                summary: 'Get dependents from a task',
+                description: 'Returns the dependents of a task.',
+                tags: ['Tasks', 'Dependencies'],
+                operationId: 'getDependentsForTask',
+                security: ['oauth2']
+            },
+            {
+                path: '/tasks/{task_gid}/addDependencies',
+                method: 'POST',
+                summary: 'Set dependencies for a task',
+                description: 'Marks a set of tasks as dependencies of this task.',
+                tags: ['Tasks', 'Dependencies'],
+                operationId: 'addDependenciesForTask',
+                security: ['oauth2']
+            },
+            {
+                path: '/tasks/{task_gid}/removeDependencies',
+                method: 'POST',
+                summary: 'Unlink dependencies from a task',
+                description: 'Unlinks a set of dependencies from this task.',
+                tags: ['Tasks', 'Dependencies'],
+                operationId: 'removeDependenciesForTask',
+                security: ['oauth2']
+            },
+
+            // Task Followers
+            {
+                path: '/tasks/{task_gid}/addFollowers',
+                method: 'POST',
+                summary: 'Add followers to a task',
+                description: 'Adds followers to a task.',
+                tags: ['Tasks', 'Followers'],
+                operationId: 'addFollowersForTask',
+                security: ['oauth2']
+            },
+            {
+                path: '/tasks/{task_gid}/removeFollowers',
+                method: 'POST',
+                summary: 'Remove followers from a task',
+                description: 'Removes followers from a task.',
+                tags: ['Tasks', 'Followers'],
+                operationId: 'removeFollowersForTask',
+                security: ['oauth2']
+            },
+
+            // Task Projects
+            {
+                path: '/tasks/{task_gid}/addProject',
+                method: 'POST',
+                summary: 'Add a project to a task',
+                description: 'Adds the task to the specified project.',
+                tags: ['Tasks', 'Projects'],
+                operationId: 'addProjectForTask',
+                security: ['oauth2']
+            },
+            {
+                path: '/tasks/{task_gid}/removeProject',
+                method: 'POST',
+                summary: 'Remove a project from a task',
+                description: 'Removes the task from the specified project.',
+                tags: ['Tasks', 'Projects'],
+                operationId: 'removeProjectForTask',
+                security: ['oauth2']
+            },
+
+            // Subtasks
+            {
+                path: '/tasks/{task_gid}/subtasks',
+                method: 'GET',
+                summary: 'Get subtasks from a task',
+                description: 'Returns a compact representation of all the subtasks of a task.',
+                tags: ['Tasks', 'Subtasks'],
+                operationId: 'getSubtasksForTask',
+                security: ['oauth2']
+            },
+            {
+                path: '/tasks/{task_gid}/subtasks',
+                method: 'POST',
+                summary: 'Create a subtask',
+                description: 'Creates a new subtask and adds it to the parent task.',
+                tags: ['Tasks', 'Subtasks'],
+                operationId: 'createSubtaskForTask',
+                security: ['oauth2']
+            },
+
+            // Time Tracking
+            {
+                path: '/tasks/{task_gid}/time_tracking_entries',
+                method: 'GET',
+                summary: 'Get time tracking entries from a task',
+                description: 'Returns time tracking entries from a task.',
+                tags: ['Time tracking entries'],
+                operationId: 'getTimeTrackingEntriesForTask',
+                security: ['oauth2']
+            },
+            {
+                path: '/tasks/{task_gid}/time_tracking_entries',
+                method: 'POST',
+                summary: 'Create a time tracking entry',
+                description: 'Creates a time tracking entry on a task.',
+                tags: ['Time tracking entries'],
+                operationId: 'createTimeTrackingEntry',
+                security: ['oauth2']
+            },
+            {
+                path: '/time_tracking_entries/{time_tracking_entry_gid}',
+                method: 'GET',
+                summary: 'Get a time tracking entry',
+                description: 'Returns the complete time tracking entry record for a single time tracking entry.',
+                tags: ['Time tracking entries'],
+                operationId: 'getTimeTrackingEntry',
+                security: ['oauth2']
+            },
+            {
+                path: '/time_tracking_entries/{time_tracking_entry_gid}',
+                method: 'PUT',
+                summary: 'Update a time tracking entry',
+                description: 'Updates the time tracking entry and returns the updated record.',
+                tags: ['Time tracking entries'],
+                operationId: 'updateTimeTrackingEntry',
+                security: ['oauth2']
+            },
+            {
+                path: '/time_tracking_entries/{time_tracking_entry_gid}',
+                method: 'DELETE',
+                summary: 'Delete a time tracking entry',
+                description: 'Deletes the time tracking entry.',
+                tags: ['Time tracking entries'],
+                operationId: 'deleteTimeTrackingEntry',
+                security: ['oauth2']
+            },
+
+            // Status Updates
+            {
+                path: '/status_updates',
+                method: 'POST',
+                summary: 'Create a status update',
+                description: 'Creates a new status update and returns the created status update record.',
+                tags: ['Status updates'],
+                operationId: 'createStatusUpdate',
+                security: ['oauth2']
+            },
+            {
+                path: '/status_updates/{status_update_gid}',
+                method: 'GET',
+                summary: 'Get a status update',
+                description: 'Returns the complete status update record for a single status update.',
+                tags: ['Status updates'],
+                operationId: 'getStatusUpdate',
+                security: ['oauth2']
+            },
+            {
+                path: '/status_updates/{status_update_gid}',
+                method: 'PUT',
+                summary: 'Update a status update',
+                description: 'Updates the status update and returns the updated status update record.',
+                tags: ['Status updates'],
+                operationId: 'updateStatusUpdate',
+                security: ['oauth2']
+            },
+            {
+                path: '/status_updates/{status_update_gid}',
+                method: 'DELETE',
+                summary: 'Delete a status update',
+                description: 'Deletes the status update.',
+                tags: ['Status updates'],
+                operationId: 'deleteStatusUpdate',
+                security: ['oauth2']
+            },
+
+            // Tags
+            {
+                path: '/tags',
+                method: 'GET',
+                summary: 'Get multiple tags',
+                description: 'Returns the compact tag records for some filtered set of tags.',
+                tags: ['Tags'],
+                operationId: 'getTags',
+                security: ['oauth2']
+            },
+            {
+                path: '/tags',
+                method: 'POST',
+                summary: 'Create a tag',
+                description: 'Creates a new tag and returns the created tag record.',
+                tags: ['Tags'],
+                operationId: 'createTag',
+                security: ['oauth2']
+            },
+            {
+                path: '/tags/{tag_gid}',
+                method: 'GET',
+                summary: 'Get a tag',
+                description: 'Returns the complete tag record for a single tag.',
+                tags: ['Tags'],
+                operationId: 'getTag',
+                security: ['oauth2']
+            },
+            {
+                path: '/tags/{tag_gid}',
+                method: 'PUT',
+                summary: 'Update a tag',
+                description: 'Updates the tag and returns the updated tag record.',
+                tags: ['Tags'],
+                operationId: 'updateTag',
+                security: ['oauth2']
+            },
+            {
+                path: '/tags/{tag_gid}',
+                method: 'DELETE',
+                summary: 'Delete a tag',
+                description: 'Deletes the tag.',
+                tags: ['Tags'],
+                operationId: 'deleteTag',
+                security: ['oauth2']
+            },
+
+            // Typeahead
+            {
+                path: '/workspaces/{workspace_gid}/typeahead',
+                method: 'GET',
+                summary: 'Get objects via typeahead',
+                description: 'Retrieves objects in the workspace based on an auto-completion/typeahead search algorithm.',
+                tags: ['Typeahead'],
+                operationId: 'typeaheadForWorkspace',
+                security: ['oauth2']
+            },
+
+            // Organization Exports
+            {
+                path: '/organization_exports',
+                method: 'POST',
+                summary: 'Create an organization export',
+                description: 'Creates an organization export request and returns the created organization export record.',
+                tags: ['Organization exports'],
+                operationId: 'createOrganizationExport',
+                security: ['oauth2']
+            },
+            {
+                path: '/organization_exports/{organization_export_gid}',
+                method: 'GET',
+                summary: 'Get details on an organization export',
+                description: 'Returns details of a previously-requested organization export.',
+                tags: ['Organization exports'],
+                operationId: 'getOrganizationExport',
+                security: ['oauth2']
+            },
+
+            // Project Templates
+            {
+                path: '/project_templates/{project_template_gid}/instantiateProject',
+                method: 'POST',
+                summary: 'Instantiate a project from a project template',
+                description: 'Creates and returns a job that will asynchronously handle the project instantiation.',
+                tags: ['Project templates'],
+                operationId: 'instantiateProject',
+                security: ['oauth2']
+            },
+            {
+                path: '/teams/{team_gid}/project_templates',
+                method: 'GET',
+                summary: 'Get a team\'s project templates',
+                description: 'Returns the compact project template records for all project templates in the team.',
+                tags: ['Project templates'],
+                operationId: 'getProjectTemplatesForTeam',
+                security: ['oauth2']
+            },
+
+            // Project Status Updates
+            {
+                path: '/projects/{project_gid}/project_statuses',
+                method: 'GET',
+                summary: 'Get statuses from a project',
+                description: 'Returns the compact project status update records for all updates on the project.',
+                tags: ['Project status updates'],
+                operationId: 'getProjectStatusesForProject',
+                security: ['oauth2']
+            },
+            {
+                path: '/projects/{project_gid}/project_statuses',
+                method: 'POST',
+                summary: 'Create a project status',
+                description: 'Creates a new status update and returns the created status update record.',
+                tags: ['Project status updates'],
+                operationId: 'createProjectStatusForProject',
+                security: ['oauth2']
+            },
+
+            // Rules
+            {
+                path: '/rules/{rule_gid}/trigger',
+                method: 'POST',
+                summary: 'Trigger a rule',
+                description: 'Triggers a rule which uses an "inbox" trigger.',
+                tags: ['Rules'],
+                operationId: 'triggerRule',
+                security: ['oauth2']
+            },
+
+            // Search
+            {
+                path: '/workspaces/{workspace_gid}/search',
+                method: 'GET',
+                summary: 'Search in a workspace',
+                description: 'Searches for objects in a workspace.',
+                tags: ['Search'],
+                operationId: 'searchInWorkspace',
+                security: ['oauth2']
+            },
+
+            // User Task Lists
+            {
+                path: '/user_task_lists/{user_task_list_gid}',
+                method: 'GET',
+                summary: 'Get a user task list',
+                description: 'Returns the complete user task list record for a single user task list.',
+                tags: ['User task lists'],
+                operationId: 'getUserTaskList',
+                security: ['oauth2']
+            },
+            {
+                path: '/users/{user_gid}/user_task_list',
+                method: 'GET',
+                summary: 'Get a user\'s task list',
+                description: 'Returns the complete user task list record for a user\'s My Tasks.',
+                tags: ['User task lists'],
+                operationId: 'getUserTaskListForUser',
+                security: ['oauth2']
+            },
+
+            // Workspace Memberships
+            {
+                path: '/workspace_memberships',
+                method: 'GET',
+                summary: 'Get multiple workspace memberships',
+                description: 'Returns the compact workspace membership records.',
+                tags: ['Workspace memberships'],
+                operationId: 'getWorkspaceMemberships',
+                security: ['oauth2']
+            },
+            {
+                path: '/workspace_memberships/{workspace_membership_gid}',
+                method: 'GET',
+                summary: 'Get a workspace membership',
+                description: 'Returns the complete workspace membership record for a single workspace membership.',
+                tags: ['Workspace memberships'],
+                operationId: 'getWorkspaceMembership',
+                security: ['oauth2']
             }
         ];
+        
+        console.log(`Created ${this.endpoints.length} comprehensive sample endpoints`);
     }
 
     setupEventListeners() {
@@ -798,33 +1283,165 @@ class AsanaAPIExplorer {
                     ${endpoint.description ? `<div class="endpoint-description">${endpoint.description}</div>` : ''}
                 </div>
                 <div class="endpoint-details">
-                    ${endpoint.tags.length > 0 ? `
-                        <div class="endpoint-tags">
-                            ${endpoint.tags.map(tag => `<span class="tag">${tag}</span>`).join('')}
+                    <button class="collapsible-toggle" onclick="explorer.toggleEndpointDetails(${index})">
+                        Show Parameters & Execute
+                    </button>
+                    <div id="details-${index}" class="collapsible-content">
+                        ${this.generateParametersForm(endpoint, index)}
+                        <div class="execute-section">
+                            <button class="execute-btn" onclick="explorer.executeEndpoint(${index})" 
+                                    ${!this.personalAccessToken ? 'disabled' : ''} id="execute-btn-${index}">
+                                ${this.personalAccessToken ? 'Execute API Call' : 'Enter PAT to Execute'}
+                            </button>
                         </div>
-                    ` : ''}
-                    ${endpoint.operationId ? `
-                        <div style="font-size: 12px; color: #6c757d; margin-bottom: 0.5rem;">
-                            <strong>Operation ID:</strong> ${endpoint.operationId}
-                        </div>
-                    ` : ''}
-                    ${endpoint.security.length > 0 ? `
-                        <div class="security-info">
-                            <strong>Security:</strong> ${endpoint.security.join(', ')}
-                        </div>
-                    ` : ''}
-                    ${this.canExecuteEndpoint(endpoint) ? `
-                        <button class="execute-btn" onclick="explorer.executeEndpoint(${index})" 
-                                ${!this.personalAccessToken ? 'disabled' : ''}>
-                            ${this.personalAccessToken ? 'Execute API Call' : 'Enter PAT to Execute'}
-                        </button>
-                        <div id="response-${index}"></div>
-                    ` : ''}
+                        <div id="response-${index}" class="response-section"></div>
+                    </div>
                 </div>
             </div>
         `).join('');
 
         container.innerHTML = `<div class="endpoints-grid">${endpointsHTML}</div>`;
+    }
+
+    toggleEndpointDetails(index) {
+        const detailsElement = document.getElementById(`details-${index}`);
+        const toggleButton = detailsElement.previousElementSibling;
+        
+        if (detailsElement.classList.contains('show')) {
+            detailsElement.classList.remove('show');
+            toggleButton.textContent = 'Show Parameters & Execute';
+        } else {
+            detailsElement.classList.add('show');
+            toggleButton.textContent = 'Hide Parameters & Execute';
+        }
+    }
+
+    generateParametersForm(endpoint, index) {
+        const pathParams = this.extractPathParameters(endpoint.path);
+        const queryParams = this.getCommonQueryParameters(endpoint);
+        const bodyParams = this.getBodyParameters(endpoint);
+
+        let html = '';
+
+        // Path parameters
+        if (pathParams.length > 0) {
+            html += `
+                <div class="parameters-section">
+                    <div class="parameters-title">Path Parameters</div>
+                    ${pathParams.map(param => `
+                        <div class="parameter-group">
+                            <label>
+                                ${param} <span class="parameter-required">*</span>
+                            </label>
+                            <input type="text" 
+                                   id="path-${param}-${index}" 
+                                   placeholder="Enter ${param}"
+                                   required>
+                            <div class="parameter-description">Required path parameter</div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        // Query parameters
+        if (queryParams.length > 0) {
+            html += `
+                <div class="parameters-section">
+                    <div class="parameters-title">Query Parameters</div>
+                    ${queryParams.map(param => `
+                        <div class="parameter-group">
+                            <label>${param.name}</label>
+                            <input type="${param.type}" 
+                                   id="query-${param.name}-${index}" 
+                                   placeholder="${param.description}">
+                            <div class="parameter-description">${param.description}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        // Request body for POST/PUT/PATCH methods
+        if (['POST', 'PUT', 'PATCH'].includes(endpoint.method)) {
+            html += `
+                <div class="parameters-section">
+                    <div class="parameters-title">Request Body (JSON)</div>
+                    <div class="parameter-group">
+                        <label>Body</label>
+                        <textarea id="body-${index}" 
+                                  placeholder="Enter JSON request body">${bodyParams}</textarea>
+                        <div class="parameter-description">JSON request body</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        return html;
+    }
+
+    extractPathParameters(path) {
+        const matches = path.match(/{([^}]+)}/g);
+        return matches ? matches.map(match => match.slice(1, -1)) : [];
+    }
+
+    getCommonQueryParameters(endpoint) {
+        const commonParams = [
+            { name: 'limit', type: 'number', description: 'Results per page (1-100)' },
+            { name: 'offset', type: 'text', description: 'Pagination offset' },
+            { name: 'opt_fields', type: 'text', description: 'Comma-separated list of fields to return' },
+            { name: 'opt_expand', type: 'text', description: 'Comma-separated list of fields to expand' }
+        ];
+
+        // Add endpoint-specific parameters based on path
+        if (endpoint.path.includes('/projects')) {
+            commonParams.push(
+                { name: 'archived', type: 'checkbox', description: 'Include archived projects' },
+                { name: 'team', type: 'text', description: 'Filter by team GID' }
+            );
+        }
+
+        if (endpoint.path.includes('/tasks')) {
+            commonParams.push(
+                { name: 'assignee', type: 'text', description: 'Filter by assignee GID' },
+                { name: 'project', type: 'text', description: 'Filter by project GID' },
+                { name: 'completed_since', type: 'date', description: 'Filter tasks completed after this date' }
+            );
+        }
+
+        return commonParams.slice(0, 4); // Limit to first 4 for UI simplicity
+    }
+
+    getBodyParameters(endpoint) {
+        // Return sample JSON for different endpoint types
+        const path = endpoint.path.toLowerCase();
+        
+        if (path.includes('/task') && endpoint.method === 'POST') {
+            return JSON.stringify({
+                "data": {
+                    "name": "New task name",
+                    "notes": "Task description",
+                    "projects": ["project_gid_here"]
+                }
+            }, null, 2);
+        }
+        
+        if (path.includes('/project') && endpoint.method === 'POST') {
+            return JSON.stringify({
+                "data": {
+                    "name": "New project name",
+                    "notes": "Project description",
+                    "team": "team_gid_here"
+                }
+            }, null, 2);
+        }
+
+        return JSON.stringify({
+            "data": {
+                "name": "Example name",
+                "notes": "Example description"
+            }
+        }, null, 2);
     }
 
     updateStats() {
@@ -960,17 +1577,36 @@ class AsanaAPIExplorer {
             '/users/me',
             '/workspaces',
             '/users',
-            '/teams'
+            '/teams',
+            '/tags',
+            '/custom_fields',
+            '/projects',
+            '/portfolios',
+            '/goals'
+        ];
+        
+        // Safe patterns that don't require path parameters
+        const safePatterns = [
+            /^\/users$/,
+            /^\/workspaces$/,
+            /^\/teams$/,
+            /^\/tags$/,
+            /^\/custom_fields$/,
+            /^\/projects$/,
+            /^\/portfolios$/,
+            /^\/goals$/,
+            /^\/users\/me$/
         ];
         
         return endpoint.method === 'GET' && 
                (safeEndpoints.includes(endpoint.path) || 
-                endpoint.path.match(/^\/(users|workspaces|teams)$/));
+                safePatterns.some(pattern => pattern.test(endpoint.path)));
     }
 
     async executeEndpoint(endpointIndex) {
         const endpoint = this.filteredEndpoints[endpointIndex];
         const responseContainer = document.getElementById(`response-${endpointIndex}`);
+        const executeButton = document.getElementById(`execute-btn-${endpointIndex}`);
         
         if (!this.personalAccessToken) {
             this.showApiResponse(responseContainer, 'Please enter and test your PAT first', 'error');
@@ -978,49 +1614,152 @@ class AsanaAPIExplorer {
         }
 
         // Show loading state
+        executeButton.innerHTML = '<span class="loading"></span> Executing...';
+        executeButton.disabled = true;
+        responseContainer.style.display = 'block';
         this.showApiResponse(responseContainer, 'Executing API call...', 'loading');
 
         try {
-            // Construct the full URL
-            let apiUrl = `${this.baseUrl}${endpoint.path}`;
+            // Build URL with path parameters
+            let apiUrl = this.buildUrlWithParameters(endpoint, endpointIndex);
             
-            // Add some basic query parameters for GET requests
-            if (endpoint.method === 'GET') {
-                const params = new URLSearchParams();
-                params.append('limit', '10'); // Limit results for demo
-                params.append('opt_pretty', 'true');
-                apiUrl += `?${params.toString()}`;
+            // Build query parameters
+            const queryParams = this.buildQueryParameters(endpointIndex);
+            if (queryParams.size > 0) {
+                apiUrl += `?${queryParams.toString()}`;
             }
 
-            const response = await fetch(apiUrl, {
+            // Build request body for POST/PUT/PATCH
+            let requestBody = null;
+            if (['POST', 'PUT', 'PATCH'].includes(endpoint.method)) {
+                requestBody = this.buildRequestBody(endpointIndex);
+            }
+
+            const fetchOptions = {
                 method: endpoint.method,
                 headers: {
                     'Authorization': `Bearer ${this.personalAccessToken}`,
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json'
+                    'Accept': 'application/json'
                 }
-            });
+            };
 
+            if (requestBody) {
+                fetchOptions.headers['Content-Type'] = 'application/json';
+                fetchOptions.body = requestBody;
+            }
+
+            const response = await fetch(apiUrl, fetchOptions);
             const responseData = await response.json();
             
+            // Display response
+            const responseHeaders = Array.from(response.headers.entries())
+                .map(([key, value]) => `${key}: ${value}`)
+                .join('\n');
+
+            const responseContent = `
+                <div class="response-headers">Status: ${response.status} ${response.statusText}
+URL: ${apiUrl}
+${responseHeaders}</div>
+                <div class="response-body">${JSON.stringify(responseData, null, 2)}</div>
+            `;
+            
             if (response.ok) {
-                this.showApiResponse(responseContainer, 
-                    `Status: ${response.status} ${response.statusText}\n\n${JSON.stringify(responseData, null, 2)}`, 
-                    'success');
+                this.showApiResponse(responseContainer, responseContent, 'success');
             } else {
-                this.showApiResponse(responseContainer, 
-                    `Error ${response.status}: ${responseData.errors?.[0]?.message || 'API call failed'}\n\n${JSON.stringify(responseData, null, 2)}`, 
-                    'error');
+                this.showApiResponse(responseContainer, responseContent, 'error');
             }
         } catch (error) {
-            this.showApiResponse(responseContainer, `Network Error: ${error.message}`, 'error');
+            this.showApiResponse(responseContainer, 
+                `Network Error: ${error.message}`, 'error');
+        } finally {
+            // Reset button state
+            executeButton.innerHTML = 'Execute API Call';
+            executeButton.disabled = false;
         }
     }
 
+    buildUrlWithParameters(endpoint, index) {
+        let url = `${this.baseUrl}${endpoint.path}`;
+        
+        // Replace path parameters
+        const pathParams = this.extractPathParameters(endpoint.path);
+        pathParams.forEach(param => {
+            const input = document.getElementById(`path-${param}-${index}`);
+            if (input && input.value.trim()) {
+                url = url.replace(`{${param}}`, encodeURIComponent(input.value.trim()));
+            }
+        });
+        
+        return url;
+    }
+
+    buildQueryParameters(index) {
+        const params = new URLSearchParams();
+        
+        // Common parameters
+        const limitInput = document.getElementById(`query-limit-${index}`);
+        if (limitInput && limitInput.value) {
+            params.append('limit', limitInput.value);
+        } else {
+            params.append('limit', '10'); // Default limit
+        }
+
+        const offsetInput = document.getElementById(`query-offset-${index}`);
+        if (offsetInput && offsetInput.value) {
+            params.append('offset', offsetInput.value);
+        }
+
+        const fieldsInput = document.getElementById(`query-opt_fields-${index}`);
+        if (fieldsInput && fieldsInput.value) {
+            params.append('opt_fields', fieldsInput.value);
+        }
+
+        const expandInput = document.getElementById(`query-opt_expand-${index}`);
+        if (expandInput && expandInput.value) {
+            params.append('opt_expand', expandInput.value);
+        }
+
+        // Additional endpoint-specific parameters
+        ['archived', 'team', 'assignee', 'project', 'completed_since'].forEach(paramName => {
+            const input = document.getElementById(`query-${paramName}-${index}`);
+            if (input && input.value) {
+                if (input.type === 'checkbox') {
+                    if (input.checked) {
+                        params.append(paramName, 'true');
+                    }
+                } else {
+                    params.append(paramName, input.value);
+                }
+            }
+        });
+
+        params.append('opt_pretty', 'true');
+        return params;
+    }
+
+    buildRequestBody(index) {
+        const bodyTextarea = document.getElementById(`body-${index}`);
+        if (bodyTextarea && bodyTextarea.value.trim()) {
+            try {
+                // Validate JSON
+                JSON.parse(bodyTextarea.value.trim());
+                return bodyTextarea.value.trim();
+            } catch (error) {
+                throw new Error(`Invalid JSON in request body: ${error.message}`);
+            }
+        }
+        return null;
+    }
+
     showApiResponse(container, content, type) {
+        const icon = type === 'loading' ? '⏳' : type === 'success' ? '✅' : '❌';
+        const title = type === 'loading' ? 'Loading...' : type === 'success' ? 'Success' : 'Error';
+        
         container.innerHTML = `
-            <div class="api-response ${type}">
-                <div class="response-header">${type === 'loading' ? '⏳ Loading...' : type === 'success' ? '✅ Response:' : '❌ Error:'}</div>
+            <div class="response-content">
+                <div style="font-weight: bold; margin-bottom: 10px; color: ${type === 'success' ? '#28a745' : type === 'error' ? '#dc3545' : '#6c757d'}">
+                    ${icon} ${title}
+                </div>
                 ${content}
             </div>
         `;
