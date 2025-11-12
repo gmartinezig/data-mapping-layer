@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asana API Endpoints Explorer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f7fa;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+            padding: 2rem;
+            border-radius: 10px;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .controls {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .search-box {
+            flex: 1;
+            min-width: 250px;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 10px 15px;
+            border: 2px solid #e1e8ed;
+            border-radius: 25px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .filter-buttons {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .method-filter {
+            padding: 8px 16px;
+            border: 2px solid #e1e8ed;
+            border-radius: 20px;
+            background: white;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            transition: all 0.3s ease;
+        }
+
+        .method-filter:hover {
+            background: #f8f9fa;
+        }
+
+        .method-filter.active {
+            border-color: #667eea;
+            background: #667eea;
+            color: white;
+        }
+
+        .stats {
+            background: white;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 2rem;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .endpoints-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .endpoint-card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .endpoint-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+        }
+
+        .endpoint-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid #e1e8ed;
+        }
+
+        .endpoint-method {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+            margin-bottom: 0.5rem;
+        }
+
+        .method-get { background: #e3f2fd; color: #1976d2; }
+        .method-post { background: #e8f5e8; color: #388e3c; }
+        .method-put { background: #fff3e0; color: #f57c00; }
+        .method-patch { background: #fce4ec; color: #c2185b; }
+        .method-delete { background: #ffebee; color: #d32f2f; }
+
+        .endpoint-path {
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            background: #f8f9fa;
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin: 0.5rem 0;
+            word-break: break-all;
+        }
+
+        .endpoint-summary {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #2c3e50;
+        }
+
+        .endpoint-description {
+            color: #6c757d;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+
+        .endpoint-details {
+            padding: 1rem 1.5rem;
+            background: #f8f9fa;
+        }
+
+        .endpoint-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .tag {
+            background: #e9ecef;
+            color: #495057;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .security-info {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 0.5rem;
+            margin: 0.5rem 0;
+            border-radius: 0 4px 4px 0;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            color: #6c757d;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 1rem;
+            border-radius: 4px;
+            margin: 1rem 0;
+            border-left: 4px solid #dc3545;
+        }
+
+        .api-config {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .pat-section label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #2c3e50;
+        }
+
+        .pat-input-group {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .pat-input-group input {
+            flex: 1;
+            padding: 10px 15px;
+            border: 2px solid #e1e8ed;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .pat-input-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .toggle-btn, .test-btn, .clear-btn {
+            padding: 10px 15px;
+            border: 2px solid #e1e8ed;
+            border-radius: 6px;
+            background: white;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        .toggle-btn:hover, .test-btn:hover, .clear-btn:hover {
+            background: #f8f9fa;
+            border-color: #667eea;
+        }
+
+        .test-btn {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+            font-weight: 600;
+        }
+
+        .test-btn:hover {
+            background: #5a6fd8;
+        }
+
+        .test-btn:disabled {
+            background: #6c757d;
+            border-color: #6c757d;
+            cursor: not-allowed;
+        }
+
+        .clear-btn {
+            background: #dc3545;
+            color: white;
+            border-color: #dc3545;
+        }
+
+        .clear-btn:hover {
+            background: #c82333;
+            border-color: #c82333;
+        }
+
+        .pat-status {
+            font-size: 14px;
+            padding: 0.5rem 0;
+        }
+
+        .pat-status.success {
+            color: #28a745;
+        }
+
+        .pat-status.error {
+            color: #dc3545;
+        }
+
+        .pat-status.info {
+            color: #17a2b8;
+        }
+
+        .execute-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            transition: background 0.3s ease;
+            margin-top: 0.5rem;
+        }
+
+        .execute-btn:hover {
+            background: #218838;
+        }
+
+        .execute-btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+
+        .api-response {
+            margin-top: 1rem;
+            padding: 1rem;
+            background: #f8f9fa;
+            border-radius: 4px;
+            border-left: 4px solid #17a2b8;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .api-response.loading {
+            border-left-color: #ffc107;
+        }
+
+        .api-response.error {
+            border-left-color: #dc3545;
+        }
+
+        .api-response.success {
+            border-left-color: #28a745;
+        }
+
+        .response-header {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            .endpoints-grid {
+                grid-template-columns: 1fr;
+                gap: 1rem;
+            }
+            
+            .controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .search-box {
+                min-width: unset;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Asana API Endpoints</h1>
+            <p class="subtitle">Explore all available endpoints from the Asana OpenAPI specification</p>
+        </header>
+
+        <div class="api-config">
+            <div class="pat-section">
+                <label for="patInput">Asana Personal Access Token (PAT):</label>
+                <div class="pat-input-group">
+                    <input type="password" id="patInput" placeholder="Enter your Asana PAT to enable API testing">
+                    <button id="togglePat" class="toggle-btn" title="Show/Hide PAT">👁️</button>
+                    <button id="testConnection" class="test-btn">Test Connection</button>
+                    <button id="clearPat" class="clear-btn" title="Clear PAT from storage">🗑️ Clear</button>
+                </div>
+                <div class="pat-status" id="patStatus"></div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Search endpoints by path, method, or description...">
+            </div>
+            <div class="filter-buttons">
+                <button class="method-filter active" data-method="all">All</button>
+                <button class="method-filter" data-method="get">GET</button>
+                <button class="method-filter" data-method="post">POST</button>
+                <button class="method-filter" data-method="put">PUT</button>
+                <button class="method-filter" data-method="patch">PATCH</button>
+                <button class="method-filter" data-method="delete">DELETE</button>
+            </div>
+        </div>
+
+        <div class="stats" id="stats">
+            <div class="spinner"></div>
+            <p>Loading Asana API endpoints...</p>
+        </div>
+
+        <div id="endpointsContainer">
+            <!-- Endpoints will be loaded here -->
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
