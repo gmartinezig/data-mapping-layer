@@ -1,0 +1,65 @@
+{
+  "version": "1.0",
+  "name": "Workspace Projects Creation Example",
+  "description": "Gets workspaces, then creates a project in each workspace with iteration",
+  "sequence": [
+    {
+      "method": "GET",
+      "path": "/workspaces",
+      "summary": "Get workspaces",
+      "description": "Returns the workspaces available to the user.",
+      "tags": ["Workspaces"],
+      "parameters": {
+        "path": {},
+        "query": {
+          "limit": "3",
+          "opt_fields": "gid,name,is_organization"
+        },
+        "body": null
+      },
+      "variableMappings": {}
+    },
+    {
+      "method": "POST", 
+      "path": "/projects",
+      "summary": "Create project in each workspace (with iteration)",
+      "description": "This step iterates through each workspace from step 1 and creates a project",
+      "tags": ["Projects"],
+      "parameters": {
+        "path": {},
+        "query": {},
+        "body": "{\n  \"data\": {\n    \"name\": \"Test Project - {{item.name}}\",\n    \"notes\": \"Auto-created project for workspace {{item.name}}\",\n    \"workspace\": \"{{item.gid}}\"\n  }\n}"
+      },
+      "variableMappings": {},
+      "iteration": {
+        "enabled": true,
+        "sourceField": "step0.data",
+        "iterationVariable": "item",
+        "unifyResults": true
+      }
+    }
+  ],
+  "dataTransformations": {
+    "fieldMappings": [
+      {
+        "sourceField": "gid",
+        "targetField": "project_id",
+        "isUnified": false
+      },
+      {
+        "sourceField": "name",
+        "targetField": "project_name", 
+        "isUnified": false
+      }
+    ],
+    "unifiedColumns": [
+      {
+        "name": "project_info",
+        "formatTemplate": "{name} (ID: {gid})",
+        "sourceFields": ["name", "gid"]
+      }
+    ]
+  },
+  "timestamp": "2025-11-12T00:00:00.000Z",
+  "baseUrl": "https://app.asana.com/api/1.0"
+}

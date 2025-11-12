@@ -2002,6 +2002,12 @@ ${responseHeaders}</div>
             endpointIndex: endpointIndex,
             parameters: this.captureCurrentParameters(endpointIndex),
             variableMappings: {},
+            iteration: {
+                enabled: false,
+                sourceField: '',
+                iterationVariable: 'item',
+                unifyResults: true
+            },
             executed: false,
             result: null,
             error: null
@@ -2091,6 +2097,8 @@ ${responseHeaders}</div>
                         ${this.renderParameterSummary(item)}
                         
                         ${this.renderVariableMappings(item, index, availableVariables)}
+                        
+                        ${this.renderIterationConfig(item, index, availableVariables)}
                         
                         ${this.renderSequenceParameterEditor(item, index)}
                         
@@ -3359,6 +3367,127 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
         }
     }
 
+    renderIterationConfig(item, itemIndex, availableVariables) {
+        // Only show iteration config if there are previous steps with array data available
+        if (itemIndex === 0) {
+            return '';
+        }
+
+        // Get available array variables from previous steps
+        const arrayVariables = availableVariables.filter(variable => 
+            variable.description.includes('array') || variable.path.includes('.data') || variable.example.includes('[')
+        );
+
+        // Also check for any existing iteration configuration
+        const hasIterationConfig = item.iteration && item.iteration.enabled;
+        
+        if (arrayVariables.length === 0 && !hasIterationConfig) {
+            return '';
+        }
+
+        return `
+            <div class="iteration-config" style="margin: 10px 0; padding: 10px; border: 1px solid #e9ecef; border-radius: 4px; background: #f8f9fa;">
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                    <label style="display: flex; align-items: center; gap: 5px; font-weight: 600; font-size: 12px;">
+                        <input type="checkbox" 
+                               id="iteration-enabled-${item.id}"
+                               ${item.iteration.enabled ? 'checked' : ''} 
+                               onchange="explorer.toggleIteration('${item.id}', this.checked)">
+                        🔄 Enable Iteration
+                    </label>
+                    <span style="color: #6c757d; font-size: 11px;">Execute this step for each item in array data</span>
+                </div>
+                
+                <div id="iteration-settings-${item.id}" class="iteration-settings" 
+                     style="display: ${item.iteration.enabled ? 'block' : 'none'}; margin-left: 20px;">
+                     
+                    <div style="margin-bottom: 8px;">
+                        <label style="display: block; font-weight: 600; font-size: 11px; margin-bottom: 4px;">
+                            Iterate over array from:
+                        </label>
+                        <select id="iteration-source-${item.id}" 
+                                onchange="explorer.updateIteration('${item.id}', 'sourceField', this.value)"
+                                style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ced4da; border-radius: 3px;">
+                            <option value="">Select array data source...</option>
+                            ${arrayVariables.concat([
+                                // Add any currently configured source that might not be in arrayVariables
+                                ...(item.iteration.sourceField && !arrayVariables.find(v => v.path === item.iteration.sourceField) 
+                                    ? [{ path: item.iteration.sourceField, description: 'Previous configuration (execute to refresh)', example: 'Not executed yet' }]
+                                    : [])
+                            ]).map(variable => {
+                                const selected = variable.path === item.iteration.sourceField ? 'selected' : '';
+                                return `<option value="${variable.path}" ${selected}>
+                                    ${variable.description} → ${variable.example}
+                                </option>`;
+                            }).join('')}
+                        </select>
+                    </div>
+                    
+                    <div style="display: flex; gap: 10px; margin-bottom: 8px;">
+                        <div style="flex: 1;">
+                            <label style="display: block; font-weight: 600; font-size: 11px; margin-bottom: 4px;">
+                                Iteration variable name:
+                            </label>
+                            <input type="text" 
+                                   id="iteration-variable-${item.id}"
+                                   value="${item.iteration.iterationVariable || 'item'}"
+                                   placeholder="item"
+                                   onchange="explorer.updateIteration('${item.id}', 'iterationVariable', this.value)"
+                                   style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ced4da; border-radius: 3px;">
+                        </div>
+                        <div style="flex: 1;">
+                            <label style="display: flex; align-items: center; gap: 5px; font-weight: 600; font-size: 11px; margin-top: 20px;">
+                                <input type="checkbox" 
+                                       id="iteration-unify-${item.id}"
+                                       ${item.iteration.unifyResults ? 'checked' : ''} 
+                                       onchange="explorer.updateIteration('${item.id}', 'unifyResults', this.checked)">
+                                Unify results into array
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div style="background: #e7f3ff; padding: 8px; border-radius: 3px; font-size: 11px; color: #0c5460;">
+                        💡 <strong>Usage:</strong> Use <code>{{${item.iteration.iterationVariable || 'item'}.fieldName}}</code> in parameters to reference each iteration item.
+                        ${item.iteration.unifyResults ? 'All iteration results will be combined into a single array for the next step.' : 'Each iteration result will be kept separate.'}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    toggleIteration(itemId, enabled) {
+        const item = this.apiSequence.find(item => item.id === itemId);
+        if (!item) return;
+
+        item.iteration.enabled = enabled;
+        
+        // Show/hide iteration settings
+        const settings = document.getElementById(`iteration-settings-${itemId}`);
+        if (settings) {
+            settings.style.display = enabled ? 'block' : 'none';
+        }
+
+        console.log(`Iteration ${enabled ? 'enabled' : 'disabled'} for step ${itemId}`);
+    }
+
+    updateIteration(itemId, field, value) {
+        const item = this.apiSequence.find(item => item.id === itemId);
+        if (!item) return;
+
+        item.iteration[field] = value;
+        
+        // Update the usage hint when iteration variable name changes
+        if (field === 'iterationVariable') {
+            const hintElement = document.querySelector(`#iteration-settings-${itemId} .usage-hint`);
+            if (hintElement) {
+                const variableName = value || 'item';
+                hintElement.innerHTML = `💡 <strong>Usage:</strong> Use <code>{{${variableName}.fieldName}}</code> in parameters to reference each iteration item.`;
+            }
+        }
+
+        console.log(`Updated iteration ${field} for step ${itemId}:`, value);
+    }
+
     async executeSequence() {
         if (this.apiSequence.length === 0) {
             alert('No endpoints in sequence to execute.');
@@ -3459,9 +3588,27 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
             item.result = null;
             item.error = null;
 
-            // Set current sequence item context for parameter building
-            this.currentSequenceItem = item;
+            // Check if this step should iterate
+            if (item.iteration && item.iteration.enabled && item.iteration.sourceField) {
+                await this.executeIterativeSequenceItem(item);
+            } else {
+                await this.executeSingleSequenceItem(item);
+            }
 
+        } catch (error) {
+            item.error = `Execution Error: ${error.message}`;
+            item.executed = true;
+            console.error('Sequence item execution failed:', error);
+        }
+
+        this.renderSequence();
+    }
+
+    async executeSingleSequenceItem(item) {
+        // Set current sequence item context for parameter building
+        this.currentSequenceItem = item;
+
+        try {
             // Build URL with variable substitution
             let url = `${this.baseUrl}${item.endpoint.path}`;
             
@@ -3519,15 +3666,212 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
                 item.executed = true;
             }
 
-        } catch (error) {
-            item.error = `Network Error: ${error.message}`;
-            item.executed = true;
         } finally {
             // Clear sequence item context
             this.currentSequenceItem = null;
         }
+    }
 
-        this.renderSequence();
+    async executeIterativeSequenceItem(item) {
+        console.log(`🔄 Starting iteration for step ${item.id} with configuration:`, item.iteration);
+        
+        // Get the array data to iterate over
+        const iterationData = this.resolveVariable(item.iteration.sourceField);
+        
+        if (!Array.isArray(iterationData)) {
+            throw new Error(`Iteration source ${item.iteration.sourceField} is not an array or does not exist. Got: ${typeof iterationData}`);
+        }
+
+        console.log(`🔄 Iterating over ${iterationData.length} items from ${item.iteration.sourceField}`);
+        
+        const iterationResults = [];
+        const iterationErrors = [];
+        const variableName = item.iteration.iterationVariable || 'item';
+
+        // Store original parameters as template
+        const originalParameters = JSON.parse(JSON.stringify(item.parameters));
+
+        for (let i = 0; i < iterationData.length; i++) {
+            const iterationItem = iterationData[i];
+            console.log(`🔄 Iteration ${i + 1}/${iterationData.length}:`, iterationItem);
+
+            try {
+                // Set current iteration context
+                this.currentIterationContext = {
+                    [variableName]: iterationItem
+                };
+
+                // Build URL for this iteration
+                let url = `${this.baseUrl}${item.endpoint.path}`;
+                
+                // Apply path parameters with iteration context
+                const pathParams = this.extractPathParameters(item.endpoint.path);
+                pathParams.forEach(param => {
+                    let value = originalParameters.path[param];
+                    
+                    // Check if there's a variable mapping
+                    if (item.variableMappings[param]) {
+                        value = this.resolveVariable(item.variableMappings[param]);
+                    }
+                    
+                    // Check if value contains iteration variable placeholder
+                    if (typeof value === 'string' && value && value.includes('{{') && value.includes('}}')) {
+                        value = this.resolveIterationPlaceholder(value, variableName, iterationItem);
+                    }
+                    
+                    if (value) {
+                        url = url.replace(`{${param}}`, encodeURIComponent(value));
+                    }
+                });
+
+                // Build query parameters with iteration context
+                const queryParams = new URLSearchParams();
+                Object.entries(originalParameters.query || {}).forEach(([key, value]) => {
+                    if (value) {
+                        let resolvedValue = value;
+                        
+                        // Resolve iteration placeholders in query parameters
+                        if (typeof resolvedValue === 'string' && resolvedValue.includes('{{') && resolvedValue.includes('}}')) {
+                            resolvedValue = this.resolveIterationPlaceholder(resolvedValue, variableName, iterationItem);
+                        }
+                        
+                        if (resolvedValue) {
+                            queryParams.append(key, resolvedValue);
+                        }
+                    }
+                });
+
+                if (queryParams.toString()) {
+                    url += `?${queryParams.toString()}`;
+                }
+
+                // Prepare request with iteration context
+                const fetchOptions = {
+                    method: item.endpoint.method,
+                    headers: {
+                        'Authorization': `Bearer ${this.personalAccessToken}`,
+                        'Accept': 'application/json'
+                    }
+                };
+
+                if (originalParameters.body && ['POST', 'PUT', 'PATCH'].includes(item.endpoint.method)) {
+                    fetchOptions.headers['Content-Type'] = 'application/json';
+                    let resolvedBody = originalParameters.body;
+                    
+                    console.log(`🔄 Original body:`, resolvedBody);
+                    
+                    // Resolve iteration placeholders in body
+                    if (resolvedBody.includes('{{') && resolvedBody.includes('}}')) {
+                        resolvedBody = this.resolveIterationPlaceholder(resolvedBody, variableName, iterationItem);
+                        console.log(`🔄 Resolved body:`, resolvedBody);
+                    }
+                    
+                    fetchOptions.body = resolvedBody;
+                }
+
+                console.log(`🔄 Executing iteration ${i + 1}: ${item.endpoint.method} ${url}`);
+
+                // Execute request for this iteration
+                const response = await fetch(url, fetchOptions);
+                const responseData = await response.json();
+
+                if (response.ok) {
+                    iterationResults.push(responseData);
+                    console.log(`✅ Iteration ${i + 1} successful`);
+                } else {
+                    const errorMsg = `Iteration ${i + 1}: ${response.status}: ${responseData.errors?.[0]?.message || responseData.error || 'API call failed'}`;
+                    iterationErrors.push(errorMsg);
+                    console.error(`❌ ${errorMsg}`, responseData);
+                }
+
+                // Add delay between iterations to be respectful
+                if (i < iterationData.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                }
+
+            } catch (iterationError) {
+                const errorMsg = `Iteration ${i + 1}: ${iterationError.message}`;
+                iterationErrors.push(errorMsg);
+                console.error(`❌ ${errorMsg}`);
+            } finally {
+                // Clear iteration context
+                this.currentIterationContext = null;
+            }
+        }
+
+        // Process results based on unifyResults setting
+        if (item.iteration.unifyResults) {
+            // Unify all successful results into a single array
+            const unifiedData = iterationResults.flatMap(result => {
+                // If result has data property and it's an array, flatten it
+                if (result.data && Array.isArray(result.data)) {
+                    return result.data;
+                }
+                // If result itself is the data, use it directly
+                return result;
+            });
+
+            item.result = {
+                data: unifiedData,
+                iteration_summary: {
+                    total_iterations: iterationData.length,
+                    successful_iterations: iterationResults.length,
+                    failed_iterations: iterationErrors.length,
+                    unified_items: unifiedData.length
+                }
+            };
+        } else {
+            // Keep results separate
+            item.result = {
+                data: iterationResults,
+                iteration_summary: {
+                    total_iterations: iterationData.length,
+                    successful_iterations: iterationResults.length,
+                    failed_iterations: iterationErrors.length
+                }
+            };
+        }
+
+        // Handle errors
+        if (iterationErrors.length > 0) {
+            if (iterationErrors.length === iterationData.length) {
+                // All iterations failed
+                item.error = `All ${iterationErrors.length} iterations failed: ${iterationErrors[0]}`;
+            } else {
+                // Some iterations failed
+                console.warn(`⚠️ ${iterationErrors.length}/${iterationData.length} iterations failed:`, iterationErrors);
+                // Store errors in result for reference but don't fail the step
+                item.result.iteration_errors = iterationErrors;
+            }
+        }
+
+        item.executed = true;
+        this.sequenceResults.set(item.id, item.result);
+
+        console.log(`🏁 Iteration completed: ${iterationResults.length}/${iterationData.length} successful iterations`);
+    }
+
+    resolveIterationPlaceholder(value, variableName, iterationItem) {
+        if (typeof value !== 'string') return value;
+
+        // Replace iteration variable placeholders like {{item.gid}} or {{item.name}}
+        const iterationPattern = new RegExp(`\\{\\{${variableName}\\.(\\w+)\\}\\}`, 'g');
+        
+        let resolvedValue = value.replace(iterationPattern, (match, fieldName) => {
+            const fieldValue = iterationItem[fieldName];
+            console.log(`🔄 Resolving iteration placeholder ${match} → ${fieldValue}`);
+            if (fieldValue === undefined) {
+                console.warn(`⚠️ Field ${fieldName} not found in iteration item. Available fields:`, Object.keys(iterationItem || {}));
+            }
+            return fieldValue !== undefined ? fieldValue : match; // Return original if field not found
+        });
+
+        // Also handle regular variable placeholders
+        if (resolvedValue.includes('{{') && resolvedValue.includes('}}')) {
+            resolvedValue = this.resolveVariablePlaceholder(resolvedValue);
+        }
+
+        return resolvedValue;
     }
 
     resolveVariable(variablePath) {
@@ -3608,7 +3952,13 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
                 description: item.endpoint.description,
                 tags: item.endpoint.tags,
                 parameters: this.convertParametersForExport(item.parameters, index),
-                variableMappings: this.convertVariableMappingsForExport(item.variableMappings, index)
+                variableMappings: this.convertVariableMappingsForExport(item.variableMappings, index),
+                iteration: item.iteration ? {
+                    enabled: item.iteration.enabled,
+                    sourceField: this.convertVariableToStepReference(`{{${item.iteration.sourceField}}}`, index).slice(2, -2),
+                    iterationVariable: item.iteration.iterationVariable,
+                    unifyResults: item.iteration.unifyResults
+                } : undefined
             })),
             dataTransformations: {
                 fieldMappings: [...this.dataTransformations.fieldMappings],
@@ -3702,6 +4052,12 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
                                 body: null
                             },
                             variableMappings: {},
+                            iteration: {
+                                enabled: false,
+                                sourceField: '',
+                                iterationVariable: 'item',
+                                unifyResults: true
+                            },
                             executed: false,
                             result: null,
                             error: null
@@ -3719,6 +4075,17 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
                             importItem.variableMappings || {}, 
                             this.apiSequence.length - 1
                         );
+
+                        // Import iteration settings
+                        if (importItem.iteration) {
+                            sequenceItem.iteration = {
+                                enabled: importItem.iteration.enabled || false,
+                                sourceField: importItem.iteration.sourceField ? 
+                                    this.convertStepReferenceToVariable(`{{${importItem.iteration.sourceField}}}`, this.apiSequence.length - 1).slice(2, -2) : '',
+                                iterationVariable: importItem.iteration.iterationVariable || 'item',
+                                unifyResults: importItem.iteration.unifyResults !== false // Default to true
+                            };
+                        }
 
                         loadedCount++;
                     } else {
@@ -3739,6 +4106,17 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
                             endpointIndex: -1,
                             parameters: importItem.parameters || { path: {}, query: {}, body: null },
                             variableMappings: importItem.variableMappings || {},
+                            iteration: importItem.iteration ? {
+                                enabled: importItem.iteration.enabled || false,
+                                sourceField: importItem.iteration.sourceField || '',
+                                iterationVariable: importItem.iteration.iterationVariable || 'item',
+                                unifyResults: importItem.iteration.unifyResults !== false
+                            } : {
+                                enabled: false,
+                                sourceField: '',
+                                iterationVariable: 'item',
+                                unifyResults: true
+                            },
                             executed: false,
                             result: null,
                             error: null,
