@@ -1968,6 +1968,11 @@ ${responseHeaders}</div>
         }).join('');
 
         container.innerHTML = sequenceHTML;
+
+        // Restore parameter values to form fields after rendering
+        setTimeout(() => {
+            this.restoreParametersToForms();
+        }, 50);
     }
 
     getAvailableVariables(currentIndex) {
@@ -2134,10 +2139,10 @@ ${responseHeaders}</div>
                                onchange="explorer.updateSequenceParameter('${item.id}', 'query', 'opt_expand', this.value)">
                     </div>
                     
-                    ${this.renderEndpointSpecificQueryParams(item)}
-                </div>
-
-                ${['POST', 'PUT', 'PATCH'].includes(item.endpoint.method) ? `
+                        ${this.renderEndpointSpecificQueryParams(item)}
+                        
+                        ${this.renderQueryParameterVariableMappings(item, index)}
+                </div>                ${['POST', 'PUT', 'PATCH'].includes(item.endpoint.method) ? `
                     <div class="param-editor-section">
                         <div class="param-editor-title">Request Body (JSON)</div>
                         <textarea class="param-editor-textarea"
@@ -2198,6 +2203,107 @@ ${responseHeaders}</div>
         `;
     }
 
+    renderQueryParameterVariableMappings(item, itemIndex) {
+        const availableVariables = this.getAvailableVariables(itemIndex);
+        
+        // Find query parameters that could use variable mapping
+        const path = item.endpoint.path.toLowerCase();
+        let mappableParams = [];
+
+        if (path.includes('/projects')) {
+            mappableParams = ['workspace', 'team'];
+        } else if (path.includes('/tasks')) {
+            mappableParams = ['project', 'assignee', 'workspace'];
+        } else if (path.includes('/users')) {
+            mappableParams = ['workspace', 'team'];
+        }
+
+        if (mappableParams.length === 0 && availableVariables.length === 0) {
+            return '';
+        }
+
+        // Include any existing query parameter variable mappings from imported sequences
+        const allVariableOptions = [...availableVariables];
+        
+        mappableParams.forEach(param => {
+            const currentValue = item.parameters.query[param];
+            if (currentValue && currentValue.includes('{{') && currentValue.includes('}}')) {
+                const match = currentValue.match(/\{\{([^}]+)\}\}/);
+                if (match && !allVariableOptions.find(v => v.path === match[1])) {
+                    allVariableOptions.push({
+                        path: match[1],
+                        description: `Imported mapping for ${param}`,
+                        example: 'Not executed yet'
+                    });
+                }
+            }
+        });
+
+        if (allVariableOptions.length === 0) {
+            return '';
+        }
+
+        return `
+            <div style="margin-top: 12px;">
+                <div style="font-weight: 600; font-size: 12px; margin-bottom: 8px; color: #6c757d;">
+                    Query Parameter Variable Mappings
+                </div>
+                ${mappableParams.map(param => `
+                    <div style="margin-bottom: 8px;">
+                        <label style="display: block; font-weight: 600; font-size: 11px; margin-bottom: 4px;">
+                            ${param} variable source:
+                        </label>
+                        <select id="query-mapping-${item.id}-${param}" 
+                                onchange="explorer.updateQueryVariableMapping('${item.id}', '${param}', this.value)"
+                                style="width: 100%; padding: 4px; font-size: 11px;">
+                            <option value="">Manual input (use text field above)</option>
+                            ${allVariableOptions.map(variable => {
+                                const currentValue = item.parameters.query[param];
+                                const isSelected = currentValue && currentValue === `{{${variable.path}}}`;
+                                return `<option value="${variable.path}" ${isSelected ? 'selected' : ''}>
+                                    ${variable.description} (${variable.example})
+                                </option>`;
+                            }).join('')}
+                        </select>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+
+    updateQueryVariableMapping(itemId, paramName, variablePath) {
+        const item = this.apiSequence.find(item => item.id === itemId);
+        if (!item) return;
+
+        if (variablePath) {
+            // Set the query parameter to use the variable
+            item.parameters.query[paramName] = `{{${variablePath}}}`;
+            
+            // Update the corresponding text input field
+            const input = document.getElementById(`seq-query-${paramName}-${itemId}`);
+            if (input) {
+                input.value = `{{${variablePath}}}`;
+            }
+        } else {
+            // Clear the variable mapping, keep any manual value
+            const currentValue = item.parameters.query[paramName];
+            if (currentValue && currentValue.includes('{{') && currentValue.includes('}}')) {
+                delete item.parameters.query[paramName];
+                
+                // Clear the text input field
+                const input = document.getElementById(`seq-query-${paramName}-${itemId}`);
+                if (input) {
+                    input.value = '';
+                }
+            }
+        }
+
+        console.log(`Updated query variable mapping: ${paramName} = ${variablePath || 'manual'}`);
+        
+        // Update the parameter summary
+        this.updateParameterSummaryOnly(item);
+    }
+
     toggleParameterEditor(itemId) {
         const editor = document.getElementById(`param-editor-${itemId}`);
         if (editor) {
@@ -2208,6 +2314,8 @@ ${responseHeaders}</div>
     updateSequenceParameter(itemId, paramType, paramName, value) {
         const item = this.apiSequence.find(item => item.id === itemId);
         if (!item) return;
+
+        console.log(`Updating parameter: ${itemId}.${paramType}.${paramName} = ${value}`);
 
         if (paramType === 'path') {
             item.parameters.path[paramName] = value;
@@ -2221,8 +2329,16 @@ ${responseHeaders}</div>
             item.parameters.body = value;
         }
 
-        // Update the parameter summary display
-        this.renderSequence();
+        // Don't re-render to avoid losing focus, just update the parameter summary
+        this.updateParameterSummaryOnly(item);
+    }
+
+    updateParameterSummaryOnly(item) {
+        // Find and update just the parameter summary for this item
+        const summaryElement = document.querySelector(`#seq-item-${item.id} .parameter-summary`);
+        if (summaryElement) {
+            summaryElement.innerHTML = this.renderParameterSummary(item).replace('<div class="parameter-summary">', '').replace('</div>', '');
+        }
     }
 
     applyParameterPreset(itemId, presetType) {
@@ -2266,14 +2382,15 @@ ${responseHeaders}</div>
             Object.entries(preset).forEach(([key, value]) => {
                 item.parameters.query[key] = value;
                 
-                // Update the input field
+                // Update the input field immediately
                 const input = document.getElementById(`seq-query-${key}-${itemId}`);
                 if (input) {
                     input.value = value;
                 }
             });
 
-            this.renderSequence();
+            // Update just the parameter summary instead of full re-render
+            this.updateParameterSummaryOnly(item);
             this.showSequenceMessage(`✅ Applied ${presetType} parameter preset`, 'success');
         }
     }
@@ -2565,6 +2682,232 @@ Status: ${item.error ? 'Error' : 'Success'}
         this.showSequenceMessage(`✅ ${formatNames[format]} copied to clipboard!`, 'success');
     }
 
+    convertParametersForExport(parameters, stepIndex) {
+        console.log(`Converting parameters for export at step ${stepIndex}:`, parameters);
+        
+        const exportParams = {
+            path: { ...parameters.path },
+            query: { ...parameters.query },
+            body: parameters.body
+        };
+
+        // Convert runtime sequence IDs to stable step references
+        Object.keys(exportParams.path).forEach(key => {
+            if (exportParams.path[key]) {
+                const original = exportParams.path[key];
+                exportParams.path[key] = this.convertVariableToStepReference(exportParams.path[key], stepIndex);
+                console.log(`  Path ${key}: ${original} → ${exportParams.path[key]}`);
+            }
+        });
+
+        Object.keys(exportParams.query).forEach(key => {
+            if (exportParams.query[key]) {
+                const original = exportParams.query[key];
+                exportParams.query[key] = this.convertVariableToStepReference(exportParams.query[key], stepIndex);
+                console.log(`  Query ${key}: ${original} → ${exportParams.query[key]}`);
+            }
+        });
+
+        if (exportParams.body) {
+            const original = exportParams.body;
+            exportParams.body = this.convertVariableToStepReference(exportParams.body, stepIndex);
+            console.log(`  Body: ${original.substring(0, 100)} → ${exportParams.body.substring(0, 100)}`);
+        }
+
+        console.log('Converted parameters:', exportParams);
+        return exportParams;
+    }
+
+    convertVariableMappingsForExport(variableMappings, stepIndex) {
+        console.log(`Converting variable mappings for export at step ${stepIndex}:`, variableMappings);
+        const exportMappings = { ...variableMappings };
+        
+        Object.keys(exportMappings).forEach(key => {
+            if (exportMappings[key]) {
+                const originalValue = exportMappings[key];
+                // Variable mappings are stored as raw values like "seq_123.data[0].gid"
+                // but convertVariableToStepReference expects "{{seq_123.data[0].gid}}"
+                // So we need to wrap them in curly braces for conversion, then unwrap
+                let wrappedValue = originalValue;
+                if (!originalValue.startsWith('{{')) {
+                    wrappedValue = `{{${originalValue}}}`;
+                }
+                
+                const converted = this.convertVariableToStepReference(wrappedValue, stepIndex);
+                
+                // Remove the curly braces for storage
+                if (converted.startsWith('{{') && converted.endsWith('}}')) {
+                    exportMappings[key] = converted.slice(2, -2);
+                } else {
+                    exportMappings[key] = converted;
+                }
+                
+                console.log(`  Converted mapping ${key}: "${originalValue}" → "${exportMappings[key]}"`);
+            }
+        });
+
+        console.log(`Final converted mappings:`, exportMappings);
+        return exportMappings;
+    }
+
+    convertVariableToStepReference(value, currentStepIndex) {
+        if (typeof value !== 'string') {
+            console.log(`Not a string, returning as-is:`, value);
+            return value;
+        }
+
+        console.log(`Converting variable to step reference: "${value}" (current step: ${currentStepIndex})`);
+
+        // Convert {{seq_123456.data[0].gid}} to {{step0.data[0].gid}}
+        const variablePattern = /\{\{(seq_[a-zA-Z0-9_]+)(\..*?)\}\}/g;
+        
+        const converted = value.replace(variablePattern, (match, sequenceId, path) => {
+            console.log(`  Found variable pattern: ${match}, sequenceId: ${sequenceId}, path: ${path}`);
+            
+            // Find the step index for this sequence ID
+            const stepIndex = this.apiSequence.findIndex(item => item.id === sequenceId);
+            console.log(`  Step index for ${sequenceId}: ${stepIndex} (current step: ${currentStepIndex})`);
+            
+            if (stepIndex !== -1 && stepIndex < currentStepIndex) {
+                const result = `{{step${stepIndex}${path}}}`;
+                console.log(`  Converting runtime ID to step reference: ${match} → ${result}`);
+                return result;
+            }
+            
+            // If we can't find it, try to extract step number from existing step reference
+            const stepPattern = /step(\d+)/;
+            const stepMatch = sequenceId.match(stepPattern);
+            if (stepMatch) {
+                console.log(`  Already a step reference: ${match}`);
+                return `{{step${stepMatch[1]}${path}}}`;
+            }
+            
+            console.log(`  Cannot convert, returning original: ${match}`);
+            return match; // Return original if we can't convert
+        });
+
+        console.log(`Final converted value: "${converted}"`);
+        return converted;
+    }
+
+    debugExportConversion() {
+        console.log('=== DEBUG EXPORT CONVERSION ===');
+        console.log('Current sequence:', this.apiSequence.map(item => ({
+            id: item.id,
+            method: item.endpoint.method,
+            path: item.endpoint.path,
+            parameters: item.parameters,
+            variableMappings: item.variableMappings
+        })));
+
+        // Test the conversion on each item
+        this.apiSequence.forEach((item, index) => {
+            console.log(`\n--- Testing conversion for step ${index} (${item.id}) ---`);
+            console.log('Original parameters:', item.parameters);
+            console.log('Original variable mappings:', item.variableMappings);
+            
+            const convertedParams = this.convertParametersForExport(item.parameters, index);
+            console.log('Converted parameters:', convertedParams);
+            
+            if (item.variableMappings) {
+                const convertedMappings = this.convertVariableMappingsForExport(item.variableMappings, index);
+                console.log('Converted variable mappings:', convertedMappings);
+            }
+        });
+
+        // Test a specific variable conversion
+        const testVariable = "{{seq_test123.data[0].gid}}";
+        console.log(`\nTesting specific variable: ${testVariable}`);
+        const convertedTest = this.convertVariableToStepReference(testVariable, 1);
+        console.log(`Result: ${convertedTest}`);
+
+        // Test variable mapping conversion specifically
+        const testMapping = { workspace_gid: "seq_test123.data[0].gid" };
+        console.log(`\nTesting variable mapping: ${JSON.stringify(testMapping)}`);
+        const convertedMapping = this.convertVariableMappingsForExport(testMapping, 1);
+        console.log(`Result: ${JSON.stringify(convertedMapping)}`);
+
+        console.log('=== END DEBUG ===');
+    }
+
+    convertParametersForImport(parameters, stepIndex) {
+        const importParams = {
+            path: { ...parameters.path },
+            query: { ...parameters.query },
+            body: parameters.body
+        };
+
+        // Convert stable step references back to runtime sequence IDs
+        Object.keys(importParams.path).forEach(key => {
+            if (importParams.path[key]) {
+                importParams.path[key] = this.convertStepReferenceToVariable(importParams.path[key], stepIndex);
+            }
+        });
+
+        Object.keys(importParams.query).forEach(key => {
+            if (importParams.query[key]) {
+                importParams.query[key] = this.convertStepReferenceToVariable(importParams.query[key], stepIndex);
+            }
+        });
+
+        if (importParams.body) {
+            importParams.body = this.convertStepReferenceToVariable(importParams.body, stepIndex);
+        }
+
+        return importParams;
+    }
+
+    convertVariableMappingsForImport(variableMappings, stepIndex) {
+        console.log(`Converting variable mappings for import at step ${stepIndex}:`, variableMappings);
+        const importMappings = { ...variableMappings };
+        
+        Object.keys(importMappings).forEach(key => {
+            if (importMappings[key]) {
+                const originalValue = importMappings[key];
+                // Variable mappings are stored as raw values like "step0.data[0].gid"
+                // but convertStepReferenceToVariable expects "{{step0.data[0].gid}}"
+                let wrappedValue = originalValue;
+                if (!originalValue.startsWith('{{')) {
+                    wrappedValue = `{{${originalValue}}}`;
+                }
+                
+                const converted = this.convertStepReferenceToVariable(wrappedValue, stepIndex);
+                
+                // Remove the curly braces for storage
+                if (converted.startsWith('{{') && converted.endsWith('}}')) {
+                    importMappings[key] = converted.slice(2, -2);
+                } else {
+                    importMappings[key] = converted;
+                }
+                
+                console.log(`  Converted mapping ${key}: "${originalValue}" → "${importMappings[key]}"`);
+            }
+        });
+
+        console.log(`Final converted mappings:`, importMappings);
+        return importMappings;
+    }
+
+    convertStepReferenceToVariable(value, currentStepIndex) {
+        if (typeof value !== 'string') return value;
+
+        // Convert {{step0.data[0].gid}} to {{seq_123456.data[0].gid}} using actual sequence IDs
+        const stepPattern = /\{\{step(\d+)(\..*?)\}\}/g;
+        
+        const converted = value.replace(stepPattern, (match, stepIndex, path) => {
+            const stepNum = parseInt(stepIndex);
+            if (stepNum < currentStepIndex && stepNum < this.apiSequence.length) {
+                const referencedItem = this.apiSequence[stepNum];
+                const result = `{{${referencedItem.id}${path}}}`;
+                console.log(`Converting step reference: ${match} → ${result}`);
+                return result;
+            }
+            return match; // Return original if we can't convert
+        });
+
+        return converted;
+    }
+
     async copyAllResults() {
         const executedItems = this.apiSequence.filter(item => item.executed);
         
@@ -2630,14 +2973,96 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
         }
     }
 
-    renderVariableMappings(item, itemIndex, availableVariables) {
-        if (availableVariables.length === 0) {
-            return '';
-        }
+    restoreParametersToForms() {
+        this.apiSequence.forEach(item => {
+            console.log(`Restoring parameters for item ${item.id}:`, item.parameters);
 
+            // Restore path parameters
+            if (item.parameters.path) {
+                Object.entries(item.parameters.path).forEach(([param, value]) => {
+                    const input = document.getElementById(`seq-path-${param}-${item.id}`);
+                    if (input) {
+                        input.value = value || '';
+                        console.log(`Restored path param ${param}: ${value}`);
+                    }
+                });
+            }
+
+            // Restore query parameters
+            if (item.parameters.query) {
+                Object.entries(item.parameters.query).forEach(([param, value]) => {
+                    const input = document.getElementById(`seq-query-${param}-${item.id}`);
+                    if (input) {
+                        input.value = value || '';
+                        console.log(`Restored query param ${param}: ${value}`);
+                    }
+                });
+            }
+
+            // Restore body parameter
+            if (item.parameters.body) {
+                const textarea = document.getElementById(`seq-body-${item.id}`);
+                if (textarea) {
+                    textarea.value = item.parameters.body;
+                    console.log(`Restored body parameter:`, item.parameters.body.substring(0, 100));
+                }
+            }
+
+            // Restore path parameter variable mappings
+            if (item.variableMappings) {
+                Object.entries(item.variableMappings).forEach(([param, variablePath]) => {
+                    const select = document.getElementById(`mapping-${item.id}-${param}`);
+                    if (select) {
+                        select.value = variablePath;
+                        console.log(`Restored path variable mapping ${param}: ${variablePath}`);
+                    }
+                });
+            }
+
+            // Restore query parameter variable mappings
+            if (item.parameters.query) {
+                Object.entries(item.parameters.query).forEach(([param, value]) => {
+                    if (typeof value === 'string' && value.includes('{{') && value.includes('}}')) {
+                        const match = value.match(/\{\{([^}]+)\}\}/);
+                        if (match) {
+                            const variablePath = match[1];
+                            const select = document.getElementById(`query-mapping-${item.id}-${param}`);
+                            if (select) {
+                                select.value = variablePath;
+                                console.log(`Restored query variable mapping ${param}: ${variablePath}`);
+                            }
+                        }
+                    }
+                });
+            }
+
+            // Update the parameter summary to reflect restored values
+            this.updateParameterSummaryOnly(item);
+        });
+
+        console.log('Parameter values restored to form fields');
+    }
+
+    renderVariableMappings(item, itemIndex, availableVariables) {
         const pathParams = this.extractPathParameters(item.endpoint.path);
         if (pathParams.length === 0) {
             return '';
+        }
+
+        // For imported sequences, also include stored variable mappings that might not be in availableVariables yet
+        const allVariableOptions = [...availableVariables];
+        
+        // Add any variable mappings from the imported sequence that aren't in availableVariables
+        if (item.variableMappings) {
+            Object.entries(item.variableMappings).forEach(([param, variablePath]) => {
+                if (variablePath && !allVariableOptions.find(v => v.path === variablePath)) {
+                    allVariableOptions.push({
+                        path: variablePath,
+                        description: `Imported mapping`,
+                        example: 'Not executed yet'
+                    });
+                }
+            });
         }
 
         return `
@@ -2648,7 +3073,7 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
                         <label>Map {${param}} to:</label>
                         <select id="mapping-${item.id}-${param}" onchange="explorer.updateVariableMapping('${item.id}', '${param}', this.value)">
                             <option value="">Use original value: ${item.parameters.path[param] || 'Not set'}</option>
-                            ${availableVariables.map(variable => `
+                            ${allVariableOptions.map(variable => `
                                 <option value="${variable.path}" ${item.variableMappings[param] === variable.path ? 'selected' : ''}>
                                     ${variable.description} (${variable.example})
                                 </option>
@@ -2827,14 +3252,14 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
             version: "1.0",
             name: `Asana API Sequence - ${new Date().toLocaleDateString()}`,
             description: `API sequence with ${this.apiSequence.length} endpoints`,
-            sequence: this.apiSequence.map(item => ({
+            sequence: this.apiSequence.map((item, index) => ({
                 method: item.endpoint.method,
                 path: item.endpoint.path,
                 summary: item.endpoint.summary,
                 description: item.endpoint.description,
                 tags: item.endpoint.tags,
-                parameters: item.parameters,
-                variableMappings: item.variableMappings
+                parameters: this.convertParametersForExport(item.parameters, index),
+                variableMappings: this.convertVariableMappingsForExport(item.variableMappings, index)
             })),
             timestamp: new Date().toISOString(),
             baseUrl: this.baseUrl
@@ -2913,19 +3338,35 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
                     );
 
                     if (matchingEndpoint) {
-                        // Create sequence item
+                        // Create sequence item first
                         const sequenceItem = {
                             id: `seq_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                             endpoint: matchingEndpoint,
                             endpointIndex: -1, // Will be set when needed
-                            parameters: importItem.parameters || { path: {}, query: {}, body: null },
-                            variableMappings: importItem.variableMappings || {},
+                            parameters: {
+                                path: {},
+                                query: {},
+                                body: null
+                            },
+                            variableMappings: {},
                             executed: false,
                             result: null,
                             error: null
                         };
 
+                        // Add to sequence first so we have the correct order
                         this.apiSequence.push(sequenceItem);
+
+                        // Now convert the imported parameters using the current sequence context
+                        sequenceItem.parameters = this.convertParametersForImport(
+                            importItem.parameters || { path: {}, query: {}, body: null }, 
+                            this.apiSequence.length - 1
+                        );
+                        sequenceItem.variableMappings = this.convertVariableMappingsForImport(
+                            importItem.variableMappings || {}, 
+                            this.apiSequence.length - 1
+                        );
+
                         loadedCount++;
                     } else {
                         // Create a placeholder endpoint if not found
@@ -2972,6 +3413,11 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
                 if (!this.sequencePanelOpen) {
                     this.toggleSequencePanel();
                 }
+
+                // Restore parameter values to form fields after a short delay
+                setTimeout(() => {
+                    this.restoreParametersToForms();
+                }, 200);
             } else {
                 this.showSequenceMessage('❌ No valid endpoints found in the imported file.', 'error');
             }
@@ -3042,7 +3488,8 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
                         path: {},
                         query: {
                             limit: "5",
-                            opt_fields: "gid,name,completed,archived"
+                            opt_fields: "gid,name,completed,archived",
+                            workspace: "{{step0.data[0].gid}}"
                         },
                         body: null
                     },
@@ -3060,29 +3507,28 @@ Status: ${item.error ? 'ERROR' : 'SUCCESS'}
             }
         }
 
+        // Process the sample sequence through the normal import flow
         this.loadSequenceFromData(sampleSequence);
         
         // After loading, set up variable mappings for the sample
         setTimeout(() => {
             this.setupSampleVariableMappings();
+            // Ensure parameters are restored to forms
+            setTimeout(() => {
+                this.restoreParametersToForms();
+            }, 100);
         }, 100);
     }
 
     setupSampleVariableMappings() {
-        // For the sample, we need to set up query parameter mappings
-        // Step 2: Set workspace query parameter from step 1 result
-        if (this.apiSequence.length >= 2) {
-            const step1 = this.apiSequence[0];
-            const step2 = this.apiSequence[1];
-            
-            // Add workspace to query parameters with variable mapping
-            step2.parameters.query.workspace = `{{${step1.id}.data[0].gid}}`;
-            
-            console.log(`Setting up variable mapping: step2 workspace = {{${step1.id}.data[0].gid}}`);
-        }
-
-        this.renderSequence();
-        this.showSequenceMessage('🎯 Sample sequence loaded! Step 2 will use workspace GID from step 1. Execute step 1 first to populate the workspace data.', 'success');
+        // The sample sequence already has the correct step references in the exported format
+        // The import process will convert them to runtime IDs automatically
+        
+        // Re-render to show the updated parameters and mappings
+        setTimeout(() => {
+            this.renderSequence();
+            this.showSequenceMessage('🎯 Sample sequence loaded! Step 2 will use workspace GID from step 1. Variable mappings are automatically configured.', 'success');
+        }, 50);
     }
 }
 
